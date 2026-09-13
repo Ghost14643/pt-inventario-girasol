@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Gestión de Roles</title>
+
+    <style>
+        body {
+            font-family: sans-serif;
+            padding: 30px;
+            background: #f4f7f6;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .btn-back {
+            text-decoration: none;
+            color: #3498db;
+            font-weight: bold;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background: white;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        th, td {
+            padding: 15px;
+            text-align: left;
+            border-bottom: 1px solid #eee;
+        }
+
+        th {
+            background: #3498db;
+            color: white;
+        }
+
+        .badge {
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            background: #e1f5fe;
+            color: #01579b;
+        }
+
+        button {
+            padding: 6px 12px;
+            border: none;
+            background: #3498db;
+            color: white;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background: #2980b9;
+        }
+
+
+        .modal{
+    display:none;
+    position:fixed;
+    top:0;
+    left:0;
+    width:100%;
+    height:100%;
+    background:rgba(0,0,0,0.5);
+}
+
+.modal-content{
+    background:white;
+    width:300px;
+    padding:20px;
+    margin:10% auto;
+    border-radius:8px;
+}
+    </style>
+</head>
+
+<body>
+
+<div class="header">
+    <h1>👥 Roles de Usuario</h1>
+
+    <div>
+        <button onclick="abrirNuevo()">➕ Nuevo Usuario</button>
+        <a href="/" class="btn-back">← Volver</a>
+    </div>
+</div>
+
+<table>
+    <thead>
+        <tr>
+            <th>Usuario</th>
+            <th>Rol</th>
+
+        </tr>
+    </thead>
+
+<tbody>
+
+{% for r in usuario %}
+<tr>
+    <td>{{ r.nombre }}</td>
+
+    <td>
+        <span class="badge">
+            {{ r.id_rol }}
+        </span>
+    </td>
+
+    <td>
+        <button onclick="editar('{{ r.nombre }}','{{ r.id_rol }}')">
+            Editar
+        </button>
+    </td>
+</tr>
+{% endfor %}
+
+</tbody>
+</table>
+<div id="modal" class="modal">
+
+<div class="modal-content">
+
+<h2 id="tituloModal">Editar Usuario</h2>
+
+<input type="hidden" id="modo">
+
+<input type="text" id="rut" oninput="actualizarDV()">
+<input type="text" id="dv" disabled>
+
+<label>Usuario</label>
+<input type="text" id="usuario">
+
+<label>Rol</label>
+<select id="rol">
+    <option value="1">Administrador</option>
+    <option value="2">Vendedor</option>
+    <option value="3">dev</option>
+</select>
+
+<label>Nueva contraseña</label>
+<input type="password" id="password">
+
+<br><br>
+
+<button onclick="guardar()">Guardar</button>
+<button onclick="cerrarModal()">Cancelar</button>
+
+</div>
+</div>
+
+<script>
+
+function editar(usuario, rol, rut, dv){
+
+    document.getElementById("modo").value = "editar"
+
+    document.getElementById("usuario").value = usuario
+    document.getElementById("rut").value = rut
+    document.getElementById("dv").value = dv
+
+    document.getElementById("rol").value = rol  // MUY IMPORTANTE
+
+    document.getElementById("password").value = ""
+
+    document.getElementById("modal").style.display = "block"
+}
+
+function abrirNuevo(){
+
+    document.getElementById("tituloModal").innerText = "Nuevo Usuario"
+    document.getElementById("modo").value = "nuevo"
+
+    document.getElementById("rut").value = ""
+    document.getElementById("dv").value = ""
+    document.getElementById("usuario").value = ""
+    document.getElementById("rol").value = "2"
+    document.getElementById("password").value = ""
+
+    document.getElementById("rut").disabled = false
+    document.getElementById("dv").disabled = true
+
+    document.getElementById("modal").style.display = "block"
+}
+function cerrarModal(){
+    document.getElementById("modal").style.display = "none"
+}
+
+function guardar(){
+
+    let data = {
+        modo: document.getElementById("modo").value,
+        rut: document.getElementById("rut").value,
+        dv: document.getElementById("dv").value,
+        usuario: document.getElementById("usuario").value,
+        rol: document.getElementById("rol").value,
+        password: document.getElementById("password").value
+    }
+
+    fetch("/guardar_usuario",{
+        method:"POST",
+        headers:{
+            "Content-Type":"application/json"
+        },
+        body: JSON.stringify(data)
+    })
+    .then(r => r.json())
+    .then(r => {
+        alert(r.mensaje)
+        location.reload()
+    })
+}
+
+function calcularDV(rut) {
+
+    let suma = 0
+    let multiplo = 2
+
+    for(let i = rut.length - 1; i >= 0; i--) {
+        suma += rut[i] * multiplo
+        multiplo = multiplo == 7 ? 2 : multiplo + 1
+    }
+
+    let dv = 11 - (suma % 11)
+
+    if(dv == 11) return "0"
+    if(dv == 10) return "K"
+
+    return dv.toString()
+}
+
+function actualizarDV(){
+
+    let rut = document.getElementById("rut").value.replace(/\D/g,'')
+
+    if(rut.length > 0){
+        let dv = calcularDV(rut)
+        document.getElementById("dv").value = dv
+    }else{
+        document.getElementById("dv").value = ""
+    }
+}
+// function editar(usuario){
+//     alert("Editar usuario: " + usuario);
+//     // Aquí puedes redirigir luego
+//     // window.location = "/editar/" + usuario;
+
+</script>
+
+</body>
+</html>

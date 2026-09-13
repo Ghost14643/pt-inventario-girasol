@@ -1,0 +1,33 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Tienda Girasol",
+  "version": "0.1.0",
+  "identifier": "cl.girasol.tienda",
+  "build": {
+    "beforeDevCommand": "cd frontend && npm run dev -- --port 5173 --strictPort",
+    "beforeBuildCommand": "cd frontend && npm run build",
+    "devUrl": "http://127.0.0.1:5173",
+    "frontendDist": "../frontend/dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Tienda Girasol",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 1024,
+        "minHeight": 700
+      }
+    ]
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "externalBin": [
+      "binaries/tienda-api"
+    ],
+    "resources": {
+      "../data/girasol.db": "data/girasol.db"
+    }
+  }
+}

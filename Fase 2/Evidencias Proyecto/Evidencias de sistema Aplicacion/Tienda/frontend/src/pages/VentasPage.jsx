@@ -1,0 +1,32 @@
+import React from 'react';
+import { Banknote, CreditCard, HeartHandshake, Minus, Plus, ScanBarcode, Search, ShoppingBag, Trash2, UserRound, WalletCards, X } from 'lucide-react';
+import { AppLayout } from '../components/AppLayout.jsx';
+import { clientService, inventoryService, salesService } from '../services/api.js';
+
+const money = value => new Intl.NumberFormat('es-CL',{style:'currency',currency:'CLP',maximumFractionDigits:0}).format(Number(value||0));
+export function VentasPage({session,...props}) {
+  const [barcode,setBarcode]=React.useState('');
+  const [items,setItems]=React.useState([]);
+  const [method,setMethod]=React.useState('efectivo');
+  const [msg,setMsg]=React.useState('');
+  const [clientSearch,setClientSearch]=React.useState('');
+  const [clientResults,setClientResults]=React.useState([]);
+  const [selectedClient,setSelectedClient]=React.useState(null);
+  const [searching,setSearching]=React.useState(false);
+  React.useEffect(()=>{
+    if(method!=='credito_girasol'||clientSearch.trim().length<2){setClientResults([]);return;}
+    let active=true; const timer=setTimeout(async()=>{setSearching(true);try{const rows=await clientService.creditSearch(clientSearch);if(active)setClientResults(rows);}catch{if(active)setMsg('No fue posible buscar clientas.');}finally{if(active)setSearching(false)}},280);
+    return()=>{active=false;clearTimeout(timer)};
+  },[clientSearch,method]);
+  async function add(){if(!barcode)return;try{const p=await inventoryService.byBarcode(barcode);setItems(current=>{const index=current.findIndex(x=>x.barcode===p.barcode);return index<0?[...current,{...p,cantidad:1}]:current.map((x,n)=>n===index?{...x,cantidad:x.cantidad+1}:x)});setBarcode('');setMsg('')}catch{setMsg('No encontramos ese código de barra.')}}
+  function qty(index,delta){setItems(current=>current.map((x,n)=>n===index?{...x,cantidad:Math.max(1,x.cantidad+delta)}:x))}
+  const total=items.reduce((sum,item)=>sum+item.precio*item.cantidad,0);
+  const creditInvalid=method==='credito_girasol'&&(!selectedClient||total>selectedClient.credito_disponible);
+  async function sell(){
+    if(method==='credito_girasol'&&!selectedClient){setMsg('Selecciona una clienta para usar Crédito Girasol.');return;}
+    try{const result=await salesService.create({subtotal:total,productos:items,descuento_total:0,metodo_pago:method,rut_empleado:session.rut||'sistema',cliente_rut:selectedClient?.rut||null});setItems([]);setSelectedClient(null);setClientSearch('');setMsg(method==='credito_girasol'?`Venta a Crédito Girasol registrada. Disponible restante: ${money(result.sale.credito.disponible)}.`:'Venta registrada correctamente.');}
+    catch(error){setMsg(error?.response?.data?.detail||'No fue posible registrar la venta.');}
+  }
+  function chooseMethod(id){setMethod(id);setMsg('');if(id!=='credito_girasol'){setSelectedClient(null);setClientSearch('');}}
+  return <AppLayout {...props} session={session} active="ventas" title="Nueva venta" eyebrow="Punto de venta"><div className="sales-grid"><section><div className="scan-card"><div className="scan-card__icon"><ScanBarcode/></div><div><h2>Escanear o ingresar producto</h2><p>Usa el lector o escribe el código manualmente.</p><div className="scan-input"><input autoFocus value={barcode} onChange={e=>setBarcode(e.target.value)} onKeyDown={e=>e.key==='Enter'&&add()} placeholder="Ej: 7801234567890"/><button onClick={add}>Agregar producto</button></div></div></div><div className="data-panel cart"><div className="data-panel__top"><div><h2>Detalle de la venta</h2><p>{items.length} productos agregados</p></div><button className="text-button" onClick={()=>setItems([])}>Limpiar venta</button></div>{items.length?<div className="cart-list">{items.map((x,i)=><div className="cart-item" key={`${x.barcode}-${i}`}><span className="cart-thumb"><ShoppingBag/></span><div><strong>{x.nombre}</strong><small>Cód. {x.barcode}</small></div><div className="stepper"><button onClick={()=>qty(i,-1)}><Minus/></button><b>{x.cantidad}</b><button onClick={()=>qty(i,1)}><Plus/></button></div><strong>{money(x.precio*x.cantidad)}</strong><button className="delete" onClick={()=>setItems(c=>c.filter((_,n)=>n!==i))}><Trash2/></button></div>)}</div>:<div className="empty-state"><ShoppingBag/><strong>Tu venta está vacía</strong><span>Escanea un producto para comenzar.</span></div>}</div></section><aside className="checkout"><h2>Resumen</h2><div className="totals"><span>Subtotal <b>{money(total)}</b></span><span>Descuento <b>{money(0)}</b></span><hr/><span className="grand-total">Total <b>{money(total)}</b></span></div><h3>Método de pago</h3><div className="payment-grid payment-grid--four">{[['efectivo',Banknote,'Efectivo'],['debito',WalletCards,'Débito'],['credito',CreditCard,'Crédito'],['credito_girasol',HeartHandshake,'Crédito Girasol']].map(([id,Icon,label])=><button key={id} className={method===id?'active':''} onClick={()=>chooseMethod(id)}><Icon/><span>{label}</span></button>)}</div>{method==='credito_girasol'&&<div className="girasol-credit"><div className="girasol-credit__title"><HeartHandshake/><div><strong>Clienta para Crédito Girasol</strong><small>Busca por nombre o RUT</small></div></div>{selectedClient?<div className="selected-credit-client"><span><UserRound/></span><div><strong>{selectedClient.nombre}</strong><small>{selectedClient.rut}</small><p>Disponible <b>{money(selectedClient.credito_disponible)}</b> de {money(selectedClient.tope_credito)}</p></div><button onClick={()=>setSelectedClient(null)} aria-label="Quitar clienta"><X/></button></div>:<><div className="credit-client-search"><Search/><input value={clientSearch} onChange={e=>setClientSearch(e.target.value)} placeholder="Nombre o RUT de la clienta"/></div>{searching&&<small className="credit-search-status">Buscando…</small>}<div className="credit-client-results">{clientResults.map(client=><button key={client.rut} onClick={()=>{setSelectedClient(client);setClientResults([])}}><span><strong>{client.nombre}</strong><small>{client.rut}</small></span><span><small>Disponible</small><b>{money(client.credito_disponible)}</b></span></button>)}</div></>}</div>} {creditInvalid&&selectedClient&&<p className="credit-warning">El total supera el crédito disponible de la clienta.</p>}<button className="primary-button full" disabled={!items.length||creditInvalid} onClick={sell}>Confirmar venta · {money(total)}</button>{msg&&<p className="feedback center">{msg}</p>}<p className="secure-note">La venta quedará registrada en el arqueo del turno.</p></aside></div></AppLayout>;
+}

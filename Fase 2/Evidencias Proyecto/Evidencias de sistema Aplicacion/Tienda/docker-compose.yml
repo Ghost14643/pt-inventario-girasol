@@ -1,0 +1,27 @@
+services:
+
+  dev:
+    build: .
+    environment:
+      GIRASOL_DB_PATH: /workspace/data/girasol.db
+      MYSQL_HOST: mariadb
+      MYSQL_DATABASE: tienda_online
+      MYSQL_USER: app_user
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Define MYSQL_PASSWORD en el entorno o en .env}
+    volumes:
+      - .:/workspace
+    depends_on:
+      - mariadb
+
+  mariadb:
+    image: mariadb:11.8
+    environment:
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD:?Define MARIADB_ROOT_PASSWORD en el entorno o en .env}
+      MARIADB_USER: app_user
+      MARIADB_PASSWORD: ${MYSQL_PASSWORD:?Define MYSQL_PASSWORD en el entorno o en .env}
+      MARIADB_DATABASE: tienda_online
+    volumes:
+      - mysql_data:/var/lib/mysql
+
+volumes:
+  mysql_data:
