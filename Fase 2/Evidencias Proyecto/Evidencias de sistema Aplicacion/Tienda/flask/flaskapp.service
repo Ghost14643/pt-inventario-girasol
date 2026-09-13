@@ -1,0 +1,16 @@
+[Unit]
+Description=Servidor Flask en Python
+After=network.target
+
+[Service]
+User=tu_usuario
+WorkingDirectory=/home/tu_usuario/flaskapp
+ExecStart=/home/tu_usuario/flaskapp/start_flask.sh
+ExecStop=/home/tu_usuario/flaskapp/stop_flask.sh
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+
+
+sudo nano /etc/systemd/system/flaskapp.service

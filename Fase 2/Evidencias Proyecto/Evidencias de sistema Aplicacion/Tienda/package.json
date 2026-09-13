@@ -1,0 +1,13 @@
+{
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vite build",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "build:sidecar": "./scripts/build_sidecar.sh",
+    "build:desktop": "./scripts/build_sidecar.sh && cd src-tauri && cargo tauri build"
+  },
+  "dependencies": {
+    "@tauri-apps/cli": "^2.11.4"
+  }
+}

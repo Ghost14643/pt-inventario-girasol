@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Boutique - Menú Principal</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', sans-serif; }
+        body { background: #f4f7f6; display: flex; justify-content: center; align-items: center; min-height: 100vh; }
+        .menu-container { background: white; padding: 40px; border-radius: 15px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); width: 90%; max-width: 900px; text-align: center; }
+        h1 { color: #2c3e50; margin-bottom: 30px; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; }
+        .card { background: #ffffff; border: 2px solid #ecf0f1; border-radius: 10px; padding: 30px; transition: 0.3s; text-decoration: none; color: inherit; }
+        .card:hover { border-color: #3498db; transform: translateY(-5px); box-shadow: 0 5px 15px rgba(52,152,219,0.2); }
+        .icon { font-size: 50px; margin-bottom: 15px; display: block; }
+        .card h2 { font-size: 20px; color: #34495e; }
+        .card p { font-size: 14px; color: #7f8c8d; margin-top: 10px; }
+    </style>
+</head>
+<body>
+    <div class="menu-container">
+        <h1>🏪 Gestión de Boutique</h1>
+        <div class="grid">
+            <a href="/roles" class="card">
+                <span class="icon">👥</span>
+                <h2>Roles</h2>
+                <p>Administrar permisos y usuarios</p>
+            </a>
+            <a href="/dashboard" class="card">
+                <span class="icon">📊</span>
+                <h2>Dashboard</h2>
+                <p>Estadísticas y ventas reales</p>
+            </a>
+            <a href="/facturas" class="card">
+                <span class="icon">🧾</span>
+                <h2>Facturas</h2>
+                <p>Generar y consultar ventas</p>
+            </a>
+        </div>
+    </div>
+</body>
+</html>

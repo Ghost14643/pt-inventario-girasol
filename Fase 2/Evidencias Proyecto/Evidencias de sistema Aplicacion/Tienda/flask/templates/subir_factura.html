@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Subir Factura</title>
+</head>
+<body>
+    <h1>Subir Factura</h1>
+    <form action="/subir_factura" method="POST" enctype="multipart/form-data">
+        <label for="factura">Selecciona tu factura (imagen o PDF):</label>
+        <input type="file" id="factura" name="factura" accept="image/*,.pdf" required>
+        <button type="submit">Subir</button>
+    </form>
+</body>
+</html>

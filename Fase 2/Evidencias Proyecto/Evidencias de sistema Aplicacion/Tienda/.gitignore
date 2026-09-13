@@ -1,0 +1,32 @@
+# Entorno virtual
+venv/
+
+.venv/
+# Archivos de Python compilados
+__pycache__/
+*.pyc
+
+# Bases de datos locales
+*.db
+
+# Archivos temporales
+*.log
+*.tmp
+
+# Configuración del editor
+.vscode/
+
+# Imágenes o assets generados temporalmente (si aplica)
+*.swp
+config.json
+
+.env
+src-tauri/target/
+frontend/dist/
+frontend/node_modules/
+node_modules/
+build/
+backend/__pycache__/
+
+src-tauri/binaries/
+*.db

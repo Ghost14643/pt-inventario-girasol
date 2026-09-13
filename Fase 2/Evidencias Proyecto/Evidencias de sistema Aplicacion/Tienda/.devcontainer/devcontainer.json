@@ -1,0 +1,17 @@
+{
+    "name": "tienda-moda-local",
+
+    "image": "dev-image",
+
+    "workspaceFolder": "/workspace",
+
+    "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
+
+    "remoteUser": "root",
+
+     "runArgs": [
+        "--add-host=host.docker.internal:host-gateway"
+    ]
+
+
+}

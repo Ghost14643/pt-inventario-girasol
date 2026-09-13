@@ -1,0 +1,1 @@
+{"identifier":"default","description":"Permisos para abrir la shell local y ejecutar el sidecar Python","windows":["main"],"permissions":["core:default","shell:allow-open","shell:allow-spawn"]}

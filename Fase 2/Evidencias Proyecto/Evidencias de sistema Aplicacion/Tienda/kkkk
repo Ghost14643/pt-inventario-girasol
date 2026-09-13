@@ -1,0 +1,31 @@
+INSERT INTO rangoPrecio (
+                            idSeccionRopa,
+                            precio
+                        )
+                        VALUES (
+                            14,
+                            990
+                        );
+
+SELECT * from rangoprecio;
+
+SELECT 
+  sr.idSeccionRopa,
+  sr.nombreSeccionRopa,
+  fr.nombreFamilia,
+  rp.precio
+FROM 
+  seccionRopa sr
+INNER JOIN 
+  familiaRopa fr ON sr.idFamiliaRopa = fr.idFamiliaRopa
+INNER JOIN 
+  rangoPrecio rp ON rp.idSeccionRopa = sr.idSeccionRopa;
+
+
+SELECT * FROM rangoPrecio;
+
+
+SELECT sr.nombreSeccionRopa, fr.nombreFamilia, rp.precio, stock
+        FROM rangoPrecio rp
+        INNER JOIN seccionRopa sr ON rp.idSeccionRopa = sr.idSeccionRopa
+        INNER JOIN familiaRopa fr ON sr.idFamiliaRopa = fr.idFamiliaRopa
