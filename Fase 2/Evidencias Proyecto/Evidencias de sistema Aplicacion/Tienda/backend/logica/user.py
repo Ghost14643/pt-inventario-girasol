@@ -17,7 +17,7 @@ def verificar_contraseña(rut_empleado, contraseña):
         raise ConnectionError("No fue posible conectar con MariaDB")
     cursor = conn.cursor()
     try:
-        cursor.execute("SELECT password FROM usuario WHERE rut = %s", (rut_empleado,))
+        cursor.execute("SELECT password FROM usuario WHERE rut = ?", (rut_empleado,))
         resultado = cursor.fetchone()
         if resultado is None:
             return False
@@ -32,7 +32,7 @@ def verificacion_admin(rut_empleado):
         return False
     cursor = conn.cursor()
     try:
-        cursor.execute("SELECT LOWER(r.roles) FROM usuario u JOIN rol r ON r.id = u.id_rol WHERE u.rut = %s", (rut_empleado,))
+        cursor.execute("SELECT LOWER(r.roles) FROM usuario u JOIN rol r ON r.id = u.id_rol WHERE u.rut = ?", (rut_empleado,))
         resultado = cursor.fetchone()
         return bool(resultado and resultado[0] in ("admin", "administrador", "developer", "desarrollador"))
     finally:

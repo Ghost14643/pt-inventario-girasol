@@ -65,10 +65,9 @@ def conectar_db():
 
 
 def conectar_mydb():
+    """Redirige todas las consultas a la base de datos SQLite local."""
     try:
-        conn = mysql.connector.connect(**_mysql_config())
-        return conn
-
-    except (Error, RuntimeError, ValueError) as e:
-        print(f"Error conectando a MySQL: {e}")
+        return conectar_db()
+    except Exception as e:
+        print(f"Error conectando a SQLite local: {e}")
         return None
