@@ -1,5 +1,4 @@
 services:
-
   dev:
     build: .
     environment:
@@ -20,8 +19,11 @@ services:
       MARIADB_USER: app_user
       MARIADB_PASSWORD: ${MYSQL_PASSWORD:?Define MYSQL_PASSWORD en el entorno o en .env}
       MARIADB_DATABASE: tienda_online
+    ports:
+      - "3307:3306"
     volumes:
       - mysql_data:/var/lib/mysql
+      - ./docker/mariadb/init:/docker-entrypoint-initdb.d:ro
 
 volumes:
   mysql_data:
