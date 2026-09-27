@@ -98,13 +98,10 @@ def registrar_venta(subtotal, productos, descuento_total, metodo_pago, rut_emple
             if cliente_row is None:
                 raise ValueError("La clienta seleccionada no existe")
 
-        metodo_row = mysql_cursor.execute(
-            "SELECT id_metodo_pago FROM metodo_pago WHERE LOWER(nombre) = %s LIMIT 1",
-            (metodo_pago,),
-        )
-        if metodo_row is None:
-            raise ValueError(f"El método de pago {metodo_pago} no existe")
-        mysql_cursor.execute("SELECT id_metodo_pago FROM metodo_pago WHERE LOWER(nombre) = %s LIMIT 1", (metodo_pago,))
+        mysql_cursor.execute(
+        "SELECT id_metodo_pago FROM metodo_pago WHERE LOWER(nombre) = %s LIMIT 1",
+        (metodo_pago,),
+)
         metodo = mysql_cursor.fetchone()
         if metodo is None:
             raise ValueError(f"El método de pago {metodo_pago} no existe")
@@ -127,6 +124,22 @@ def registrar_venta(subtotal, productos, descuento_total, metodo_pago, rut_emple
             )
             if mysql_cursor.rowcount != 1:
                 raise ValueError(f"No se pudo descontar stock del producto {nombre_producto}")
+
+            mysql_cursor.execute(
+                """
+                INSERT INTO movimiento_stock
+                    (id_variante, tipo, cantidad, referencia, id_usuario)
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (
+                    id_variante,
+                    "Salida",
+                    cantidad,
+                    f"Venta {id_venta}",
+                    empleado["id_usuario"],
+                ),
+            )
+            
 
         mysql_conn.commit()
         result = {"id": int(id_venta), "subtotal": subtotal_calculado, "descuento": descuento, "total": total}

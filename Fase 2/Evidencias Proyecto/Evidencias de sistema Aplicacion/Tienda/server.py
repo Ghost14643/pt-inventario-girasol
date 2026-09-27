@@ -100,6 +100,7 @@ class InventoryCreateRequest(BaseModel):
 
 class SaleItem(BaseModel):
     id: int | str | None = None
+    sku: str
     nombre: str
     cantidad: int = Field(gt=0)
     precio: int = Field(ge=0)
@@ -347,6 +348,14 @@ def get_product_by_barcode(barcode: str) -> dict[str, Any]:
     product = inventario.obtener_producto_por_codigo(barcode)
     if product is None:
         raise HTTPException(status_code=404, detail="Producto no encontrado")
+    return product
+
+
+@app.get("/inventory/sku/{sku}")
+def get_product_by_sku(sku: str) -> dict[str, Any]:
+    product = inventario.obtener_producto_por_sku(sku)
+    if product is None:
+        raise HTTPException(status_code=404, detail="Variante no encontrada")
     return product
 
 

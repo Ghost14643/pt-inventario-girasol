@@ -101,6 +101,44 @@ def obtener_producto_por_codigo(codigo_barra: str) -> dict[str, Any] | None:
     finally:
         conn.close()
 
+def obtener_producto_por_sku(sku: str) -> dict[str, Any] | None:
+    conn = conectar_mydb()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        cursor.execute(
+            """
+            SELECT p.id_producto AS id,
+                   TRIM(p.nombre) AS nombre,
+                   p.precio_venta AS precio,
+                   vp.stock_actual AS stock,
+                   TRIM(vp.sku) AS sku,
+                   TRIM(m.nombre) AS marca
+            FROM variante_producto vp
+            JOIN producto p ON p.id_producto = vp.id_producto
+            LEFT JOIN marca m ON m.id_marca = p.id_marca
+            WHERE TRIM(vp.sku) = TRIM(%s)
+            LIMIT 1
+            """,
+            (sku,),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            return None
+
+        return {
+            "id": row["id"],
+            "sku": row["sku"],
+            "nombre": row["nombre"],
+            "precio": row["precio"],
+            "stock": int(row["stock"] or 0),
+            # Compatibilidad con las propiedades que ya muestra el carrito.
+            "barcode": row["sku"],
+            "marca": row["marca"],
+        }
+    finally:
+        cursor.close()
+        conn.close()
+
 
 
 def crear_prenda(*, nombre: str, marca: str | None, precio: int, stock: int,

@@ -1,7 +1,24 @@
-import React from 'react';
-import { Banknote, CreditCard, HeartHandshake, Minus, Plus, ScanBarcode, Search, ShoppingBag, Trash2, UserRound, WalletCards, X } from 'lucide-react';
-import { AppLayout } from '../components/AppLayout.jsx';
-import { clientService, inventoryService, salesService } from '../services/api.js';
+import React from "react";
+import {
+  Banknote,
+  CreditCard,
+  HeartHandshake,
+  Minus,
+  Plus,
+  ScanBarcode,
+  Search,
+  ShoppingBag,
+  Trash2,
+  UserRound,
+  WalletCards,
+  X,
+} from "lucide-react";
+import { AppLayout } from "../components/AppLayout.jsx";
+import {
+  clientService,
+  inventoryService,
+  salesService,
+} from "../services/api.js";
 
 const money = value => new Intl.NumberFormat('es-CL',{style:'currency',currency:'CLP',maximumFractionDigits:0}).format(Number(value||0));
 export function VentasPage({session,...props}) {
