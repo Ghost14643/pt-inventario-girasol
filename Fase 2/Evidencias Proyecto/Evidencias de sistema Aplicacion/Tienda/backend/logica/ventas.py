@@ -125,6 +125,22 @@ def registrar_venta(subtotal, productos, descuento_total, metodo_pago, rut_emple
             if mysql_cursor.rowcount != 1:
                 raise ValueError(f"No se pudo descontar stock del producto {nombre_producto}")
 
+            mysql_cursor.execute(
+                """
+                INSERT INTO movimiento_stock
+                    (id_variante, tipo, cantidad, referencia, id_usuario)
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (
+                    id_variante,
+                    "Salida",
+                    cantidad,
+                    f"Venta {id_venta}",
+                    empleado["id_usuario"],
+                ),
+            )
+            
+
         mysql_conn.commit()
         result = {"id": int(id_venta), "subtotal": subtotal_calculado, "descuento": descuento, "total": total}
         if metodo_pago == "credito_girasol":
