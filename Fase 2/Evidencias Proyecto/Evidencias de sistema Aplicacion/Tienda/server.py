@@ -11,6 +11,7 @@ import os
 import sys
 import html
 import secrets
+from decimal import Decimal
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -25,6 +26,20 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from backend.logica import arqueo, clientes, configuracion, facturas, inventario, marcas, user, ventas  # noqa: E402
+
+from backend.repositorios.usuarios_mariadb import (
+    autenticar_usuario,
+)  # noqa: E402
+
+from backend.repositorios.ventas_mariadb import (
+    registrar_venta as registrar_venta_mariadb,
+)  # noqa: E402
+
+from backend.repositorios.catalogo_mariadb import (
+    listar_metodos_pago_activos,
+    obtener_usuario_activo_por_rut,
+    obtener_variante_por_codigo,
+)
 
 TAURI_DEV_ORIGIN = os.getenv("TAURI_DEV_ORIGIN", "http://localhost:1420")
 REACT_DEV_ORIGIN = os.getenv("REACT_DEV_ORIGIN", "http://localhost:5173")
@@ -47,6 +62,7 @@ class LoginRequest(BaseModel):
 
 class LoginResponse(BaseModel):
     authenticated: bool
+    id_usuario: int
     rut: str
     is_admin: bool = False
     token: str
@@ -99,6 +115,18 @@ class SaleRequest(BaseModel):
     cliente_rut: str | None = None
     registrar_arqueo: bool = False
 
+class MariaDbSaleItem(BaseModel):
+    id_variante: int = Field(gt=0)
+    cantidad: int = Field(gt=0)
+
+
+class MariaDbSaleRequest(BaseModel):
+    id_usuario: int = Field(gt=0)
+    id_metodo_pago: int = Field(gt=0)
+    items: list[MariaDbSaleItem] = Field(min_length=1)
+    descuento: Decimal = Field(default=Decimal("0"), ge=0, le=100)
+    rut_cliente: int | None = None
+
 
 class CashOpenRequest(BaseModel):
     fecha: str
@@ -136,17 +164,42 @@ def health() -> dict[str, str]:
 @app.post("/auth/login", response_model=LoginResponse)
 def login(data: LoginRequest) -> LoginResponse:
     if not data.rut.strip() or not data.password:
-        raise HTTPException(status_code=422, detail="Usuario y clave son obligatorios")
+        raise HTTPException(
+            status_code=422,
+            detail="Usuario y clave son obligatorios",
+        )
+
     try:
-        authenticated = user.verificar_contraseña(data.rut.strip(), data.password)
+        authenticated_user = autenticar_usuario(
+            data.rut.strip(),
+            data.password,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except ConnectionError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-    if not authenticated:
-        raise HTTPException(status_code=401, detail="Usuario o contraseña incorrectos")
-    is_admin = user.verificacion_admin(data.rut)
+
+    if authenticated_user is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Usuario o contraseña incorrectos",
+        )
+
     token = secrets.token_urlsafe(32)
-    AUTH_SESSIONS[token] = {"rut": data.rut.strip(), "is_admin": is_admin}
-    return LoginResponse(authenticated=True, rut=data.rut.strip(), is_admin=is_admin, token=token)
+
+    AUTH_SESSIONS[token] = {
+        "id_usuario": authenticated_user["id_usuario"],
+        "rut": authenticated_user["rut"],
+        "is_admin": authenticated_user["is_admin"],
+    }
+
+    return LoginResponse(
+        authenticated=True,
+        id_usuario=authenticated_user["id_usuario"],
+        rut=authenticated_user["rut"],
+        is_admin=authenticated_user["is_admin"],
+        token=token,
+    )
 
 
 @app.post("/auth/logout")
@@ -164,6 +217,15 @@ def require_admin(authorization: Annotated[str | None, Header()] = None) -> dict
         raise HTTPException(status_code=401, detail="La sesión expiró; inicia sesión nuevamente")
     if not session["is_admin"]:
         raise HTTPException(status_code=403, detail="Acceso exclusivo para administradores")
+    return session
+
+
+def require_session(authorization: Annotated[str | None, Header()] = None) -> dict[str, Any]:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Sesión requerida")
+    session = AUTH_SESSIONS.get(authorization[7:])
+    if not session:
+        raise HTTPException(status_code=401, detail="La sesión expiró; inicia sesión nuevamente")
     return session
 
 
@@ -367,6 +429,72 @@ def create_sale(data: SaleRequest) -> dict[str, Any]:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {"ok": True, "sale": sale_result}
 
+@app.post("/sales-mariadb", status_code=201)
+def create_sale_mariadb(
+    data: MariaDbSaleRequest,
+    session: dict[str, Any] = Depends(require_session),
+) -> dict[str, Any]:
+    if data.id_usuario != session["id_usuario"]:
+        raise HTTPException(
+            status_code=403,
+            detail="El usuario de la venta no coincide con la sesión activa",
+        )
+    try:
+        result = registrar_venta_mariadb(
+            id_usuario=data.id_usuario,
+            id_metodo_pago=data.id_metodo_pago,
+            items=[
+                {
+                    "id_variante": item.id_variante,
+                    "cantidad": item.cantidad,
+                }
+                for item in data.items
+            ],
+            descuento=data.descuento,
+            rut_cliente=data.rut_cliente,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ConnectionError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    return {
+        "ok": True,
+        "sale": result,
+    }
+
+@app.get("/inventory-mariadb/barcode/{codigo}")
+def get_inventory_mariadb_by_code(codigo: str) -> dict[str, Any]:
+    try:
+        product = obtener_variante_por_codigo(codigo)
+    except ConnectionError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    if product is None:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+
+    return product
+
+
+@app.get("/payment-methods-mariadb")
+def get_payment_methods_mariadb() -> list[dict[str, Any]]:
+    try:
+        return listar_metodos_pago_activos()
+    except ConnectionError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.get("/users-mariadb/by-rut/{rut_usuario}")
+def get_active_user_mariadb(rut_usuario: int) -> dict[str, Any]:
+    try:
+        user = obtener_usuario_activo_por_rut(rut_usuario)
+    except ConnectionError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    if user is None:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado o inactivo")
+
+    return user
 
 @app.get("/cash-register/status/{fecha}")
 def get_cash_register_status(fecha: str) -> dict[str, Any]:
