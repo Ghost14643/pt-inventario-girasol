@@ -25,12 +25,15 @@ def registrar_venta(subtotal, productos, descuento_total, metodo_pago, rut_emple
     cantidades = {}
     for producto in productos:
         producto_id = producto.get("id")
-        if producto_id is None:
-            raise ValueError("Todos los productos deben tener identificador")
+        sku = producto.get("sku") or producto.get("barcode")
+        if producto_id is None and sku is None:
+            raise ValueError("Todos los productos deben tener identificador o SKU")
+        if sku is not None:
+            producto_id = sku
         cantidad = int(producto.get("cantidad", 0))
         if cantidad <= 0:
             raise ValueError("La cantidad debe ser mayor que cero")
-        cantidades[int(producto_id)] = cantidades.get(int(producto_id), 0) + cantidad
+        cantidades[str(producto_id)] = cantidades.get(str(producto_id), 0) + cantidad
 
     mysql_conn = conectar_mydb()
     mysql_cursor = mysql_conn.cursor(dictionary=True)
@@ -42,24 +45,23 @@ def registrar_venta(subtotal, productos, descuento_total, metodo_pago, rut_emple
         placeholders = ", ".join(["%s"] * len(ids))
         mysql_cursor.execute(
             f"""
-            SELECT p.id_producto, p.nombre, p.precio_venta,
-                   COALESCE(SUM(vp.stock_actual), 0) AS stock_disponible
-            FROM producto p
-            LEFT JOIN variante_producto vp ON vp.id_producto = p.id_producto
-            WHERE p.id_producto IN ({placeholders})
-            GROUP BY p.id_producto, p.nombre, p.precio_venta
+            SELECT vp.id_variante, vp.id_producto, p.nombre, p.precio_venta,
+                   vp.stock_actual AS stock_disponible, vp.sku
+            FROM variante_producto vp
+            JOIN producto p ON p.id_producto = vp.id_producto
+            WHERE vp.sku IN ({placeholders})
             """,
             ids,
         )
         productos_db = mysql_cursor.fetchall()
-        productos_map = {int(row["id_producto"]): row for row in productos_db}
+        productos_map = {str(row["sku"]): row for row in productos_db}
 
         items = []
         subtotal_calculado = 0
-        for producto_id, cantidad in cantidades.items():
-            row = productos_map.get(int(producto_id))
+        for clave, cantidad in cantidades.items():
+            row = productos_map.get(str(clave))
             if row is None:
-                raise ValueError(f"Producto {producto_id} no encontrado")
+                raise ValueError(f"Producto/variante {clave} no encontrado")
 
             stock_disponible = int(row["stock_disponible"] or 0)
             if cantidad > stock_disponible:
@@ -68,7 +70,7 @@ def registrar_venta(subtotal, productos, descuento_total, metodo_pago, rut_emple
             precio_unitario = int(float(row["precio_venta"]))
             total_item = cantidad * precio_unitario
             subtotal_calculado += total_item
-            items.append((int(producto_id), row["nombre"], cantidad, precio_unitario, total_item))
+            items.append((int(row["id_producto"]), int(row["id_variante"]), row["nombre"], cantidad, precio_unitario, total_item))
 
         if int(subtotal) != subtotal_calculado:
             raise ValueError(f"El subtotal no coincide con los precios vigentes: esperado {subtotal_calculado}")
@@ -114,21 +116,14 @@ def registrar_venta(subtotal, productos, descuento_total, metodo_pago, rut_emple
         )
         id_venta = mysql_cursor.lastrowid
 
-        for producto_id, nombre_producto, cantidad, precio_unitario, total_producto in items:
-            mysql_cursor.execute(
-                "SELECT id_variante FROM variante_producto WHERE id_producto = %s ORDER BY id_variante LIMIT 1",
-                (producto_id,),
-            )
-            variante = mysql_cursor.fetchone()
-            if variante is None:
-                raise ValueError(f"No existe variante activa para {nombre_producto}")
+        for producto_id, id_variante, nombre_producto, cantidad, precio_unitario, total_producto in items:
             mysql_cursor.execute(
                 "INSERT INTO detalle_venta (id_venta, id_variante, cantidad, precio_unitario) VALUES (%s, %s, %s, %s)",
-                (id_venta, variante["id_variante"], cantidad, precio_unitario),
+                (id_venta, id_variante, cantidad, precio_unitario),
             )
             mysql_cursor.execute(
                 "UPDATE variante_producto SET stock_actual = stock_actual - %s WHERE id_variante = %s AND stock_actual >= %s LIMIT 1",
-                (cantidad, variante["id_variante"], cantidad),
+                (cantidad, id_variante, cantidad),
             )
             if mysql_cursor.rowcount != 1:
                 raise ValueError(f"No se pudo descontar stock del producto {nombre_producto}")
