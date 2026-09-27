@@ -2,6 +2,10 @@
 
 Fecha: 2026-08-07. API: `http://127.0.0.1:8765`.
 
+## Base de datos única
+
+La base de referencia es MariaDB en Docker. El esquema canónico se define en [docker/mariadb/init/01-create-db.sql](docker/mariadb/init/01-create-db.sql) y [docker/mariadb/init/02-new-schema.sql](docker/mariadb/init/02-new-schema.sql). Todo el backend, incluida la lógica de clientes, ventas, inventario, usuarios y arqueo, debe seguir ese contrato y no referencias legacy a SQLite.
+
 ## Clientas: integración completada
 
 Toda la lógica nueva está en `backend/logica/clientes.py`; `server.py` solo adapta HTTP.
@@ -24,7 +28,7 @@ Toda la lógica nueva está en `backend/logica/clientes.py`; `server.py` solo ad
 
 ### Inventario e ingreso
 
-- Inventario fue integrado en modo lectura con SQLite (`/data/girasol.db`, con alternativa local `data/girasol.db`).
+- Inventario y ventas se apoyan en la base MariaDB del contenedor siguiendo el esquema definido en los scripts de inicialización.
 - `GET /inventory`, `GET /inventory/summary`, `GET /inventory/categories` y `GET /inventory/barcode/{barcode}` están implementados.
 - Métricas verificadas solo con `SELECT`: 1.548 prendas, 2.341 unidades, 3 categorías y 1.519 prendas con stock de hasta 5 unidades.
 - La base disponible contiene `familiaRopa` pero no `seccionRopa` ni una relación entre `prenda` y `familiaRopa`. Por ello el contador muestra 3 categorías globales, mientras cada prenda queda como `Sin categoría` hasta incorporar una clave de relación.
@@ -36,8 +40,8 @@ Toda la lógica nueva está en `backend/logica/clientes.py`; `server.py` solo ad
 
 ### Arqueo
 
-- `GET /cash-register/{fecha}` devuelve HTTP 500: SQLite no contiene `arqueo_diario`.
-- MySQL contiene `arqueo_caja`, pero sus columnas no coinciden con la lógica actual.
+- `GET /cash-register/{fecha}` debe consultar `arqueo_caja` y `arqueo_detalle_pago` del esquema MariaDB actual.
+- La tabla `arqueo_diario` es legacy y no forma parte del contrato canónico.
 - Falta endpoint para `cerrar_caja` y un resumen backend por método de pago.
 
 ### Ventas y otros módulos
@@ -90,8 +94,8 @@ Toda la lógica nueva está en `backend/logica/clientes.py`; `server.py` solo ad
 - Los productos repetidos se consolidan antes de validar y descontar stock.
 - El frontend ahora usa el RUT de la sesión autenticada; antes enviaba `rut: ''`, provocando HTTP 409 (`La venta requiere un empleado autenticado` / `El empleado no existe`).
 - Prueba autorizada ejecutada una sola vez con prenda TEST, ID 2082, barcode 111, cantidad 1, precio 999999 y empleado 21300379. Resultado: HTTP 200, venta MariaDB ID 4, detalle ID 2.
-- Al pasar de stock 1 a 0, el trigger SQLite `mover_y_borrar_stock0` eliminó la fila de `prenda` y la registró en `prenda0stock`; no fue una pérdida accidental.
-- Limitación arquitectónica: SQLite y MariaDB no ofrecen una transacción distribuida atómica. La función coordina rollback antes de los commits, pero un fallo excepcional entre ambos commits podría requerir reconciliación manual.
+- El flujo de stock de la base actual se gestiona en `movimiento_stock` y `variante_producto` del esquema MariaDB, sin depender de triggers ni almacenamiento paralelo.
+- La operación se realiza sobre una sola base de datos consistente; no hay transacciones cruzadas ni dependencias de almacenamiento paralelo.
 - Se retiraron `crear_boleta` y `calcular_precio_total` porque no tenían consumidores y dependían de un esquema obsoleto.
 
 
@@ -109,7 +113,7 @@ Toda la lógica nueva está en `backend/logica/clientes.py`; `server.py` solo ad
 - La API entrega un token de sesión al iniciar sesión y protege todas las rutas `/admin/*`; ocultar el botón no es el único control de acceso.
 - Permite consultar usuarios y roles, cambiar el rol de otras cuentas y restablecer claves de al menos 8 caracteres. Las claves existentes y sus hashes nunca se exponen al frontend.
 - Evita que el administrador conectado modifique su propio rol para reducir el riesgo de perder acceso accidentalmente.
-- Permite consultar, crear y editar descuentos de SQLite. Los porcentajes se validan entre 0% y 100%.
+- Permite consultar, crear y editar descuentos del esquema activo cuando exista una tabla equivalente en MariaDB; los porcentajes se validan entre 0% y 100%.
 - Incluye resumen de usuarios, roles y descuentos, estado de seguridad, diseño responsive y modo oscuro.
 - No se hicieron inserciones ni actualizaciones de prueba en usuarios, roles, claves o descuentos.
 
@@ -120,7 +124,7 @@ Toda la lógica nueva está en `backend/logica/clientes.py`; `server.py` solo ad
 - Después del login, el frontend consulta `GET /cash-register/status/{fecha}`. Si no existe registro diario, ofrece abrir caja; solo `POST /cash-register/open` crea la constancia.
 - La apertura guarda fecha y hora. Las columnas nuevas de cierre quedan `NULL`; por compatibilidad, las columnas financieras antiguas que eran `NOT NULL` se inicializan en cero.
 - `arqueo_diario` se migra de forma aditiva: no se reconstruye ni elimina la tabla. Se añadieron apertura, cierre, cantidad de ventas, débito, crédito, otros, gastos de turno, efectivo esperado/contado y diferencia.
-- El resumen consulta `ventas` en MariaDB desde la hora de apertura y agrupa efectivo, débito, crédito, transferencia y otros. Al cerrar, congela esos totales en SQLite.
+- El resumen consulta `venta` y `detalle_venta` en MariaDB desde la hora de apertura y agrupa efectivo, débito, crédito, transferencia y otros. Al cerrar, congela esos totales en el mismo esquema.
 - No se abrió ninguna caja ni se insertaron registros de prueba. La migración se aplicó con cero filas y se respaldó previamente en `/tmp/girasol-before-arqueo-20260809.db`.
 
 - `consultar_arqueo_fecha` ya no retorna `None` cuando falta el día: devuelve `existe: false`, un `aviso` legible y `puede_abrir: true`. La consulta no inserta filas.
