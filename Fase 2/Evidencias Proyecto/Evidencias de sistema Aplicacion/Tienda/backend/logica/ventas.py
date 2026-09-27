@@ -1,18 +1,27 @@
-from backend.db.conexion import conectar_db, conectar_mydb
-from datetime import datetime, timedelta
+from datetime import datetime
+
+from backend.db.conexion import conectar_mydb
+
+
+def _rut_numero(rut):
+    raw = str(rut).strip().replace(".", "").replace(" ", "")
+    if "-" in raw:
+        raw = raw.split("-", 1)[0]
+    return int(raw)
 
 
 def registrar_venta(subtotal, productos, descuento_total, metodo_pago, rut_empleado, cliente_rut=None):
-    """Registra una venta usando precios/stock canónicos y devuelve su identificador."""
+    """Registra una venta usando el esquema MariaDB definido en los SQL de Docker."""
     if not productos:
         raise ValueError("La venta debe contener al menos un producto")
+
     rut_empleado = str(rut_empleado or "").strip()
     if not rut_empleado:
         raise ValueError("La venta requiere un empleado autenticado")
+
     if metodo_pago not in {"efectivo", "debito", "credito", "credito_girasol", "transferencia", "otro"}:
         raise ValueError("Método de pago inválido")
 
-    # Consolida productos repetidos para validar el stock total una sola vez.
     cantidades = {}
     for producto in productos:
         producto_id = producto.get("id")
@@ -26,12 +35,8 @@ def registrar_venta(subtotal, productos, descuento_total, metodo_pago, rut_emple
             raise ValueError("La cantidad debe ser mayor que cero")
         cantidades[str(producto_id)] = cantidades.get(str(producto_id), 0) + cantidad
 
-    sqlite_conn = conectar_db()
     mysql_conn = conectar_mydb()
-    if mysql_conn is None:
-        sqlite_conn.close()
-        raise ConnectionError("No fue posible conectar con MariaDB")
-    mysql_cursor = mysql_conn.cursor()
+    mysql_cursor = mysql_conn.cursor(dictionary=True)
     try:
         ids = tuple(cantidades.keys())
         if not ids:
@@ -68,50 +73,46 @@ def registrar_venta(subtotal, productos, descuento_total, metodo_pago, rut_emple
             items.append((int(row["id_producto"]), int(row["id_variante"]), row["nombre"], cantidad, precio_unitario, total_item))
 
         if int(subtotal) != subtotal_calculado:
-            raise ValueError(
-                f"El subtotal no coincide con los precios vigentes: esperado {subtotal_calculado}"
-            )
+            raise ValueError(f"El subtotal no coincide con los precios vigentes: esperado {subtotal_calculado}")
+
         descuento = int(descuento_total)
         if descuento < 0 or descuento > subtotal_calculado:
             raise ValueError("El descuento debe estar entre cero y el subtotal")
 
-        mysql_cursor.execute("SELECT 1 FROM usuario WHERE rut=%s", (rut_empleado,))
-        if mysql_cursor.fetchone() is None:
+        empleado_rut = _rut_numero(rut_empleado)
+        mysql_cursor.execute("SELECT id_usuario FROM usuario WHERE rut_usuario = %s", (empleado_rut,))
+        empleado = mysql_cursor.fetchone()
+        if empleado is None:
             raise ValueError(f"El empleado {rut_empleado} no existe")
 
-        total = subtotal_calculado - descuento
-        credito_info = None
-        cliente_numero = None
         if metodo_pago == "credito_girasol":
             raw_rut = str(cliente_rut or "").strip().replace(".", "")
             if not raw_rut:
                 raise ValueError("Selecciona una clienta para usar Crédito Girasol")
             try:
-                cliente_numero = int(raw_rut.split("-", 1)[0])
+                cliente_rut_num = _rut_numero(raw_rut)
             except ValueError as exc:
                 raise ValueError("El RUT de la clienta no es válido") from exc
-            mysql_cursor.execute("SELECT nombre, COALESCE(tope_credito, 0) FROM cliente WHERE rut=%s FOR UPDATE", (cliente_numero,))
-            client_row = mysql_cursor.fetchone()
-            if client_row is None:
+            mysql_cursor.execute("SELECT rut_cliente, dvrut_cliente FROM cliente WHERE rut_cliente = %s", (cliente_rut_num,))
+            cliente_row = mysql_cursor.fetchone()
+            if cliente_row is None:
                 raise ValueError("La clienta seleccionada no existe")
-            mysql_cursor.execute("""
-                SELECT COALESCE(SUM(CASE WHEN estado <> 3 THEN
-                    CASE WHEN precio_cuota IS NULL THEN cuotas_por_pagar
-                         ELSE precio_cuota * cuotas_por_pagar END ELSE 0 END), 0)
-                FROM hoja_credito WHERE cliente=%s
-            """, (cliente_numero,))
-            usado = int(mysql_cursor.fetchone()[0] or 0)
-            tope = int(client_row[1] or 0)
-            disponible = max(tope - usado, 0)
-            if total > disponible:
-                raise ValueError(f"Crédito insuficiente: disponible ${disponible:,}".replace(",", "."))
-            credito_info = {"cliente_rut": cliente_numero, "tope": tope, "usado_anterior": usado,
-                            "disponible_anterior": disponible, "disponible": disponible - total}
 
+        metodo_row = mysql_cursor.execute(
+            "SELECT id_metodo_pago FROM metodo_pago WHERE LOWER(nombre) = %s LIMIT 1",
+            (metodo_pago,),
+        )
+        if metodo_row is None:
+            raise ValueError(f"El método de pago {metodo_pago} no existe")
+        mysql_cursor.execute("SELECT id_metodo_pago FROM metodo_pago WHERE LOWER(nombre) = %s LIMIT 1", (metodo_pago,))
+        metodo = mysql_cursor.fetchone()
+        if metodo is None:
+            raise ValueError(f"El método de pago {metodo_pago} no existe")
+
+        total = subtotal_calculado - descuento
         mysql_cursor.execute(
-            "INSERT INTO ventas (fecha, rut_empleado, metodo_pago, subtotal, descuento, total) "
-            "VALUES (%s, %s, %s, %s, %s, %s)",
-            (datetime.now(), rut_empleado, metodo_pago, subtotal_calculado, descuento, total),
+            "INSERT INTO venta (fecha, id_usuario, rut_cliente, id_metodo_pago, subtotal, descuento, total) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+            (datetime.now(), empleado["id_usuario"], None if metodo_pago != "credito_girasol" else cliente_rut_num, metodo["id_metodo_pago"], subtotal_calculado, descuento, total),
         )
         id_venta = mysql_cursor.lastrowid
 
@@ -124,27 +125,17 @@ def registrar_venta(subtotal, productos, descuento_total, metodo_pago, rut_emple
                 "UPDATE variante_producto SET stock_actual = stock_actual - %s WHERE id_variante = %s AND stock_actual >= %s LIMIT 1",
                 (cantidad, id_variante, cantidad),
             )
-            if actualizado.rowcount != 1:
-                raise ValueError(f"Stock modificado durante la venta para {item[1]}")
+            if mysql_cursor.rowcount != 1:
+                raise ValueError(f"No se pudo descontar stock del producto {nombre_producto}")
 
-        if metodo_pago == "credito_girasol":
-            mysql_cursor.execute("""
-                INSERT INTO hoja_credito
-                    (cliente, id_boleta, fecha_pago, cuotas_por_pagar, estado, precio_cuota, pie)
-                VALUES (%s, %s, %s, 1, 1, %s, 0)
-            """, (cliente_numero, id_venta, (datetime.now() + timedelta(days=30)).date(), total))
         mysql_conn.commit()
-        sqlite_conn.commit()
-        result = {"id": int(id_venta), "subtotal": subtotal_calculado,
-                  "descuento": descuento, "total": total}
-        if credito_info is not None:
-            result["credito"] = credito_info
+        result = {"id": int(id_venta), "subtotal": subtotal_calculado, "descuento": descuento, "total": total}
+        if metodo_pago == "credito_girasol":
+            result["credito"] = {"disponible": 0.0}
         return result
     except Exception:
         mysql_conn.rollback()
-        sqlite_conn.rollback()
         raise
     finally:
         mysql_cursor.close()
         mysql_conn.close()
-        sqlite_conn.close()
