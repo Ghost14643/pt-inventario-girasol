@@ -10,8 +10,8 @@ También se retiraron herramientas experimentales de cámara/códigos de barra q
 
 ### Conexiones (`backend/db/conexion.py`)
 
-- `conectar_db()`: abre SQLite, activa claves foráneas y evita crear accidentalmente una base vacía.
-- `conectar_mydb()`: abre MariaDB usando exclusivamente la configuración del entorno.
+- `conectar_db()`: abre MariaDB usando exclusivamente la configuración del entorno y apunta al esquema del contenedor Docker.
+- `conectar_mydb()`: alias de la conexión central a MariaDB.
 
 ### Autenticación y administración
 
@@ -27,8 +27,8 @@ También se retiraron herramientas experimentales de cámara/códigos de barra q
 
 ### Ventas y caja
 
-- `ventas.registrar_venta()`: valida precios y stock canónicos, registra cabecera/detalle en MariaDB y descuenta inventario SQLite.
-- `arqueo.asegurar_esquema()`, `estado_caja()`, `abrir_caja()`, `consultar_arqueo_fecha()` y `cerrar_caja()`: ciclo completo del arqueo diario.
+- `ventas.registrar_venta()`: valida precios y stock canónicos, registra cabecera/detalle en MariaDB y descuenta inventario desde la misma base.
+- `arqueo.asegurar_esquema()`, `estado_caja()`, `abrir_caja()`, `consultar_arqueo_fecha()` y `cerrar_caja()`: ciclo completo del arqueo diario en MariaDB.
 
 ### Clientas y documentos
 

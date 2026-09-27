@@ -1,17 +1,20 @@
-"""Gestión de marcas en la base SQLite local de Girasol."""
+"""Gestión de marcas en MariaDB."""
 from __future__ import annotations
-import sqlite3
+
+import mysql.connector
 from typing import Any
-from backend.db.conexion import conectar_db
+
+from backend.db.conexion import conectar_mydb
 
 
 def obtener_marcas() -> list[dict[str, Any]]:
-    conn = conectar_db()
+    conn = conectar_mydb()
     try:
-        return [dict(row) for row in conn.execute(
-            "SELECT id, TRIM(nombre) AS nombre FROM marcas ORDER BY nombre COLLATE NOCASE"
-        ).fetchall()]
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("SELECT id_marca AS id, TRIM(nombre) AS nombre FROM marca ORDER BY nombre")
+        return cursor.fetchall()
     finally:
+        cursor.close()
         conn.close()
 
 
@@ -19,22 +22,25 @@ def agregar_nueva_marca(nombre: str) -> dict[str, Any]:
     nombre = nombre.strip()
     if not nombre:
         raise ValueError("El nombre de la marca es obligatorio")
-    conn = conectar_db()
+    conn = conectar_mydb()
     try:
-        existente = conn.execute(
-            "SELECT id, TRIM(nombre) AS nombre FROM marcas WHERE LOWER(TRIM(nombre))=LOWER(?)",
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute(
+            "SELECT id_marca AS id, TRIM(nombre) AS nombre FROM marca WHERE LOWER(TRIM(nombre))=LOWER(%s)",
             (nombre,),
-        ).fetchone()
+        )
+        existente = cursor.fetchone()
         if existente:
             raise ValueError("La marca ya existe")
-        cursor = conn.execute("INSERT INTO marcas (nombre) VALUES (?)", (nombre,))
+        cursor.execute("INSERT INTO marca (nombre) VALUES (%s)", (nombre,))
         conn.commit()
         return {"id": cursor.lastrowid, "nombre": nombre}
-    except sqlite3.IntegrityError as exc:
+    except mysql.connector.IntegrityError as exc:
         conn.rollback()
         raise ValueError("La marca ya existe") from exc
     except Exception:
         conn.rollback()
         raise
     finally:
+        cursor.close()
         conn.close()

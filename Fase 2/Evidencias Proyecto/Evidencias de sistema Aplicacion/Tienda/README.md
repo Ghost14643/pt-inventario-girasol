@@ -5,7 +5,7 @@ Aplicación de escritorio moderno para punto de venta (POS) y gestión integral 
 ![Tauri](https://img.shields.io/badge/Tauri-3.13+-blue?style=flat-square&logo=tauri)
 ![React](https://img.shields.io/badge/React-18+-61dafb?style=flat-square&logo=react)
 ![Python](https://img.shields.io/badge/Python-3.10+-3776ab?style=flat-square&logo=python)
-![SQLite](https://img.shields.io/badge/SQLite-3+-003b57?style=flat-square&logo=sqlite)
+![MariaDB](https://img.shields.io/badge/MariaDB-11.8-003545?style=flat-square&logo=mariadb)
 
 ## Descripción General
 
@@ -16,7 +16,7 @@ La aplicación adopta una arquitectura moderna de tres capas:
 - **Frontend**: Interfaz React moderna con Vite y Tailwind CSS ejecutada en Webview de Tauri
 - **Shell de Escritorio**: Tauri (Rust) gestiona la ventana nativa, eventos del sistema y comunicación inter-procesos
 - **Backend**: Servidor Python (FastAPI/Flask) que expone endpoints REST/WebSockets para la lógica de negocio
-- **Base de Datos**: SQLite local para almacenamiento de datos transaccionales
+- **Base de Datos**: MariaDB en Docker, según los scripts de inicialización en [docker/mariadb/init/01-create-db.sql](docker/mariadb/init/01-create-db.sql) y [docker/mariadb/init/02-new-schema.sql](docker/mariadb/init/02-new-schema.sql)
 
 ---
 
@@ -60,9 +60,9 @@ La aplicación adopta una arquitectura moderna de tres capas:
 │  └──────────────────────────┘    └──────────────────────────┘  │
 │                                                                  │
 │  ┌──────────────────────────────────────────────────────────┐  │
-│  │    Base de Datos (SQLite)                               │  │
-│  │    - reuso.db / girasol.db                              │  │
-│  │    - Tablas: Productos, Ventas, Usuarios, etc.          │  │
+│  │    Base de Datos (MariaDB)                              │  │
+│  │    - tienda_online en contenedor Docker                 │  │
+│  │    - Esquema canónico: 01-create-db.sql + 02-new-schema │  │
 │  └──────────────────────────────────────────────────────────┘  │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
@@ -101,7 +101,7 @@ Tienda/
 │   │   ├── barcode_reader.py         # Lectura de códigos de barras
 │   │   └── printer.py                # Control de impresora térmica
 │   ├── database/                     # Conexión y operaciones de BD
-│   │   └── db.py                     # Configuración SQLite
+│   │   └── db.py                     # Configuración MariaDB
 │   └── migrations/                   # Migraciones de base de datos
 ├── public/                           # Archivos públicos estáticos
 ├── package.json                      # Dependencias Node.js
@@ -224,14 +224,14 @@ Las dependencias de ejecución incluyen:
 #### 2.3 Configurar la base de datos
 
 ```bash
-# Crear archivo de base de datos (si no existe)
-python -c "import sqlite3; sqlite3.connect('data/girasol.db').close()"
+# Iniciar la base de datos con Docker
+docker compose up -d mariadb
 
-# Ejecutar migraciones (si están disponibles)
-python -m alembic upgrade head
+# Verificar conexión y esquema
+mysql -h 127.0.0.1 -P 3307 -u app_user -p tienda_online
 ```
 
-Verifica que exista `data/girasol.db` en el directorio del proyecto.
+El esquema autorizado es el definido en [docker/mariadb/init/01-create-db.sql](docker/mariadb/init/01-create-db.sql) y [docker/mariadb/init/02-new-schema.sql](docker/mariadb/init/02-new-schema.sql).
 
 ### 3. Configurar el Frontend y Tauri
 
@@ -482,7 +482,11 @@ Crea un archivo `.env` en la raíz del proyecto:
 # Backend
 BACKEND_HOST=127.0.0.1
 BACKEND_PORT=8000
-DATABASE_URL=sqlite:///./data/girasol.db
+DB_HOST=127.0.0.1
+DB_PORT=3307
+DB_USER=app_user
+DB_PASSWORD=tu_password
+DB_DATABASE=tienda_online
 
 # Frontend
 VITE_API_BASE_URL=http://127.0.0.1:8000
@@ -583,7 +587,7 @@ Para reportar issues, sugerencias o consultas técnicas:
 - [Documentación oficial de Tauri](https://tauri.app/docs/)
 - [React Documentation](https://react.dev/)
 - [FastAPI Documentation](https://fastapi.tiangolo.com/)
-- [SQLite Documentation](https://www.sqlite.org/docs.html)
+- [MariaDB Documentation](https://mariadb.com/kb/en/documentation/)
 - [Tailwind CSS Documentation](https://tailwindcss.com/docs)
 
 ---

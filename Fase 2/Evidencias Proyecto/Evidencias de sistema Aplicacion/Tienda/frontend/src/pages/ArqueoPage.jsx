@@ -14,7 +14,7 @@ export function ArqueoPage(props) {
   const [msg, setMsg] = React.useState('');
   const [loading, setLoading] = React.useState(true);
   const load = React.useCallback(async () => { setLoading(true); try { const result=await cashService.get(today); setData(result); setExpenses(String(result.gastos_turno || 0)); setMsg(result.existe===false ? result.aviso : ''); } catch (e) { setData(null); setMsg(e?.response?.data?.detail || 'No fue posible consultar la caja.'); } finally { setLoading(false); } }, [today]);
-  React.useEffect(() => { load(); }, [load]);
+  React.useEffect(() => { load(); const interval = window.setInterval(() => { load(); }, 5000); return () => window.clearInterval(interval); }, [load]);
   const missing = data?.existe === false;
   const sales = Number(data?.total_ventas || 0);
   const expected = Number(data?.total_efectivo || 0) - Number(expenses || 0);
