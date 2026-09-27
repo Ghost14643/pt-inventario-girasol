@@ -98,13 +98,10 @@ def registrar_venta(subtotal, productos, descuento_total, metodo_pago, rut_emple
             if cliente_row is None:
                 raise ValueError("La clienta seleccionada no existe")
 
-        metodo_row = mysql_cursor.execute(
-            "SELECT id_metodo_pago FROM metodo_pago WHERE LOWER(nombre) = %s LIMIT 1",
-            (metodo_pago,),
-        )
-        if metodo_row is None:
-            raise ValueError(f"El método de pago {metodo_pago} no existe")
-        mysql_cursor.execute("SELECT id_metodo_pago FROM metodo_pago WHERE LOWER(nombre) = %s LIMIT 1", (metodo_pago,))
+        mysql_cursor.execute(
+        "SELECT id_metodo_pago FROM metodo_pago WHERE LOWER(nombre) = %s LIMIT 1",
+        (metodo_pago,),
+)
         metodo = mysql_cursor.fetchone()
         if metodo is None:
             raise ValueError(f"El método de pago {metodo_pago} no existe")
