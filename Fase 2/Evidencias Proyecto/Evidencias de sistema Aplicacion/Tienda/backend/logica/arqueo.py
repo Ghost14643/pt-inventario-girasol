@@ -1,144 +1,135 @@
-"""Estado de caja compatible con el esquema MariaDB del proyecto."""
+"""Apertura, resumen y cierre diario de caja con migración aditiva."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 
-from backend.db.conexion import conectar_mydb
+from backend.db.conexion import conectar_db, conectar_mydb
+
+_NEW_COLUMNS = {
+    "apertura_at": "TEXT", "cierre_at": "TEXT", "ventas_cantidad": "INTEGER",
+    "total_debito": "REAL", "total_credito": "REAL", "total_credito_girasol": "REAL", "total_otro": "REAL",
+    "gastos_turno": "REAL", "efectivo_esperado": "REAL",
+    "efectivo_contado": "REAL", "diferencia": "REAL",
+}
 
 
 def asegurar_esquema() -> None:
-    """No crea tablas adicionales; el esquema obligatorio vive en 01-create-db.sql y 02-new-schema.sql."""
-    return None
-
-
-def _primera_venta_fecha(fecha: str) -> int:
-    conn = conectar_mydb()
-    cursor = conn.cursor()
+    """Crea la tabla o añade columnas sin borrar ni reconstruir datos existentes."""
+    conn = conectar_db()
     try:
-        cursor.execute("SELECT id_usuario FROM usuario ORDER BY id_usuario LIMIT 1")
-        row = cursor.fetchone()
-        return int(row[0]) if row else 1
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS arqueo_diario (
+                id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT, fecha TEXT NOT NULL,
+                apertura_at TEXT, cierre_at TEXT, ventas_cantidad INTEGER,
+                total_efectivo REAL, total_debito REAL, total_credito REAL,
+                total_transferencia REAL, total_otro REAL, total_ventas REAL,
+                gastos_turno REAL, efectivo_esperado REAL, efectivo_contado REAL,
+                diferencia REAL
+            )
+        """)
+        current = {row[1] for row in conn.execute("PRAGMA table_info(arqueo_diario)")}
+        for name, sql_type in _NEW_COLUMNS.items():
+            if name not in current:
+                conn.execute(f"ALTER TABLE arqueo_diario ADD COLUMN {name} {sql_type}")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_arqueo_diario_fecha ON arqueo_diario(fecha)")
+        # Las filas anteriores a esta función eran cierres históricos, no aperturas pendientes.
+        conn.execute("UPDATE arqueo_diario SET apertura_at=fecha || ' 00:00:00', cierre_at=fecha || ' 23:59:59' WHERE apertura_at IS NULL")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     finally:
-        cursor.close(); conn.close()
+        conn.close()
 
 
 def estado_caja(fecha: str) -> dict[str, Any]:
-    conn = conectar_mydb()
-    cursor = conn.cursor(dictionary=True)
+    asegurar_esquema()
+    conn = conectar_db()
     try:
-        cursor.execute(
-            "SELECT id_arqueo, id_usuario, fecha, hora_apertura, hora_cierre, monto_inicial, monto_final, gastos, usuario_caja_abierta FROM arqueo_caja WHERE fecha = %s ORDER BY id_arqueo DESC LIMIT 1",
-            (fecha,),
-        )
-        row = cursor.fetchone()
+        row = conn.execute("SELECT fecha, apertura_at, cierre_at FROM arqueo_diario WHERE fecha=? ORDER BY id DESC LIMIT 1", (fecha,)).fetchone()
         if row is None:
             return {"fecha": fecha, "existe": False, "abierta": False, "cerrada": False}
-        return {
-            "fecha": str(row["fecha"]),
-            "existe": True,
-            "abierta": row["hora_cierre"] is None,
-            "cerrada": row["hora_cierre"] is not None,
-            "apertura_at": row["hora_apertura"],
-            "cierre_at": row["hora_cierre"],
-        }
+        return {"fecha": row["fecha"], "existe": True, "abierta": row["cierre_at"] is None,
+                "cerrada": row["cierre_at"] is not None, "apertura_at": row["apertura_at"], "cierre_at": row["cierre_at"]}
     finally:
-        cursor.close(); conn.close()
+        conn.close()
 
 
 def abrir_caja(fecha: str) -> dict[str, Any]:
-    status = estado_caja(fecha)
-    if status["existe"] and status["cerrada"]:
-        raise ValueError("La caja de esta fecha ya fue cerrada")
-    if status["existe"] and status["abierta"]:
-        return status
-    conn = conectar_mydb()
-    cursor = conn.cursor()
+    asegurar_esquema()
+    conn = conectar_db()
     try:
-        id_usuario = _primera_venta_fecha(fecha)
-        apertura = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        cursor.execute(
-            "INSERT INTO arqueo_caja (id_usuario, fecha, hora_apertura, hora_cierre, monto_inicial, monto_final, gastos, usuario_caja_abierta) VALUES (%s, %s, %s, NULL, 0, NULL, 0, %s)",
-            (id_usuario, fecha, apertura, id_usuario),
-        )
+        conn.execute("BEGIN IMMEDIATE")
+        actual = conn.execute("SELECT apertura_at, cierre_at FROM arqueo_diario WHERE fecha=? ORDER BY id DESC LIMIT 1", (fecha,)).fetchone()
+        if actual:
+            if actual["cierre_at"] is not None:
+                raise ValueError("La caja de esta fecha ya fue cerrada")
+            conn.rollback()
+            return estado_caja(fecha)
+        columns = {row[1]: row for row in conn.execute("PRAGMA table_info(arqueo_diario)")}
+        values: dict[str, Any] = {"fecha": fecha, "apertura_at": datetime.now().isoformat(sep=" ", timespec="seconds")}
+        # Compatibilidad: columnas financieras heredadas eran NOT NULL; quedan en cero hasta el cierre.
+        for name in ("subtotal_ventas", "total_efectivo", "total_tarjeta", "total_transferencia", "total_gastos", "gastos_dia", "total_ventas"):
+            if name in columns and columns[name][3] and name not in values:
+                values[name] = 0
+        names = list(values)
+        conn.execute(f"INSERT INTO arqueo_diario ({', '.join(names)}) VALUES ({', '.join('?' for _ in names)})", tuple(values[n] for n in names))
         conn.commit()
-        return {"fecha": fecha, "existe": True, "abierta": True, "cerrada": False, "apertura_at": apertura, "cierre_at": None}
+        return {"fecha": fecha, "existe": True, "abierta": True, "cerrada": False, "apertura_at": values["apertura_at"], "cierre_at": None}
     except Exception:
-        conn.rollback(); raise
+        conn.rollback()
+        raise
     finally:
-        cursor.close(); conn.close()
+        conn.close()
 
 
 def _ventas_del_turno(fecha: str, apertura_at: str | None) -> dict[str, Any]:
-    """Suma ventas del día desde la tabla `venta` del esquema actual."""
+    inicio = apertura_at or f"{fecha} 00:00:00"
+    fin = (date.fromisoformat(fecha) + timedelta(days=1)).isoformat() + " 00:00:00"
     conn = conectar_mydb()
+    if conn is None:
+        raise ConnectionError("No fue posible conectar con MariaDB para recopilar las ventas")
     cursor = conn.cursor(dictionary=True)
     try:
-        cursor.execute(
-            """
-            SELECT LOWER(mp.nombre) AS metodo, COUNT(*) AS cantidad, COALESCE(SUM(v.total), 0) AS total
-            FROM venta v
-            JOIN metodo_pago mp ON mp.id_metodo_pago = v.id_metodo_pago
-            WHERE DATE(v.fecha) = %s
-            GROUP BY LOWER(mp.nombre)
-            """,
-            (fecha,),
-        )
+        cursor.execute("""SELECT LOWER(metodo_pago) metodo, COUNT(*) cantidad, COALESCE(SUM(total),0) total
+            FROM ventas WHERE fecha >= %s AND fecha < %s GROUP BY LOWER(metodo_pago)""", (inicio, fin))
         rows = cursor.fetchall()
-        totals = {key: 0.0 for key in ("efectivo", "debito", "credito", "credito_girasol", "transferencia", "otro")}
-        cantidad_total = 0
-        for row in rows:
-            metodo = (row["metodo"] or "otro").strip().lower().replace(" ", "_")
-            if metodo not in totals:
-                metodo = "otro"
-            totals[metodo] += float(row["total"] or 0)
-            cantidad_total += int(row["cantidad"] or 0)
-        return {
-            "ventas_cantidad": cantidad_total,
-            "total_efectivo": float(totals["efectivo"]),
-            "total_debito": float(totals["debito"]),
-            "total_credito": float(totals["credito"]),
-            "total_credito_girasol": float(totals["credito_girasol"]),
-            "total_transferencia": float(totals["transferencia"]),
-            "total_otro": float(totals["otro"]),
-            "total_ventas": float(sum(totals.values())),
-        }
     finally:
         cursor.close(); conn.close()
+    totals = {key: 0.0 for key in ("efectivo", "debito", "credito", "credito_girasol", "transferencia", "otro")}
+    count = 0
+    for row in rows:
+        method = row["metodo"] if row["metodo"] in totals else "otro"
+        totals[method] += float(row["total"] or 0); count += int(row["cantidad"] or 0)
+    return {"ventas_cantidad": count, **{f"total_{key}": value for key, value in totals.items()}, "total_ventas": sum(totals.values())}
 
 
 def consultar_arqueo_fecha(fecha: str) -> dict[str, Any]:
     status = estado_caja(fecha)
     if not status["existe"]:
-        return {"fecha": fecha, "existe": False, "abierta": False, "cerrada": False, "aviso": "No existe una caja abierta para la fecha indicada.", "puede_abrir": True}
-
-    conn = conectar_mydb()
-    cursor = conn.cursor(dictionary=True)
+        return {
+            "fecha": fecha,
+            "existe": False,
+            "abierta": False,
+            "cerrada": False,
+            "aviso": "No existe una caja abierta para la fecha indicada.",
+            "puede_abrir": True,
+        }
+    conn = conectar_db()
     try:
-        cursor.execute(
-            "SELECT * FROM arqueo_caja WHERE fecha = %s ORDER BY id_arqueo DESC LIMIT 1",
-            (fecha,),
-        )
-        row = cursor.fetchone()
+        row = conn.execute("SELECT * FROM arqueo_diario WHERE fecha=? ORDER BY id DESC LIMIT 1", (fecha,)).fetchone()
+        result = dict(row)
     finally:
-        cursor.close(); conn.close()
-    if row is None:
-        return {"fecha": fecha, "existe": False, "abierta": False, "cerrada": False}
-    result = dict(row)
-    sales = _ventas_del_turno(fecha, status.get("apertura_at")) if not status["cerrada"] else {
-        "ventas_cantidad": 0,
-        "total_efectivo": 0.0,
-        "total_debito": 0.0,
-        "total_credito": 0.0,
-        "total_credito_girasol": 0.0,
-        "total_transferencia": 0.0,
-        "total_otro": 0.0,
-        "total_ventas": 0.0,
-    }
-    result.update(sales)
-    result.update({"abierta": status["abierta"], "cerrada": status["cerrada"]})
-    result["gastos_turno"] = float(result.get("gastos") or 0)
-    result["efectivo_esperado"] = float(result.get("monto_final") or sales["total_efectivo"] - result["gastos_turno"])
+        conn.close()
+    if status["cerrada"]:
+        sales = {name: float(result.get(name) or 0) for name in ("total_efectivo", "total_debito", "total_credito", "total_credito_girasol", "total_transferencia", "total_otro", "total_ventas")}
+        sales["ventas_cantidad"] = int(result.get("ventas_cantidad") or 0)
+    else:
+        sales = _ventas_del_turno(fecha, status.get("apertura_at"))
+    result.update(sales); result.update({"abierta": status["abierta"], "cerrada": status["cerrada"]})
+    result["gastos_turno"] = float(result.get("gastos_turno") or result.get("gastos_dia") or 0)
+    result["efectivo_esperado"] = sales["total_efectivo"] - result["gastos_turno"]
     return result
 
 
@@ -146,25 +137,26 @@ def cerrar_caja(fecha: str, efectivo_contado: float, gastos_turno: float) -> dic
     if efectivo_contado < 0 or gastos_turno < 0:
         raise ValueError("Los montos de caja no pueden ser negativos")
     status = estado_caja(fecha)
-    if not status["existe"]:
-        raise LookupError("No existe una caja abierta para esta fecha")
-    if status["cerrada"]:
-        raise ValueError("La caja de esta fecha ya está cerrada")
-    conn = conectar_mydb()
-    cursor = conn.cursor()
+    if not status["existe"]: raise LookupError("No existe una caja abierta para esta fecha")
+    if status["cerrada"]: raise ValueError("La caja de esta fecha ya está cerrada")
+    sales = _ventas_del_turno(fecha, status.get("apertura_at"))
+    expected = sales["total_efectivo"] - gastos_turno
+    difference = efectivo_contado - expected
+    conn = conectar_db()
     try:
-        sales = _ventas_del_turno(fecha, status.get("apertura_at"))
-        expected = float(sales["total_efectivo"]) - float(gastos_turno)
-        difference = float(efectivo_contado) - expected
-        cursor.execute(
-            "UPDATE arqueo_caja SET hora_cierre = %s, monto_final = %s, gastos = %s, usuario_caja_abierta = NULL WHERE fecha = %s AND hora_cierre IS NULL",
-            (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), efectivo_contado, gastos_turno, fecha),
-        )
-        if cursor.rowcount == 0:
-            raise LookupError("No existe una caja abierta para esta fecha")
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(arqueo_diario)")}
+        values = {"cierre_at": datetime.now().isoformat(sep=" ", timespec="seconds"), **sales,
+                  "gastos_turno": gastos_turno, "efectivo_esperado": expected,
+                  "efectivo_contado": efectivo_contado, "diferencia": difference}
+        legacy = {"subtotal_ventas": sales["total_ventas"], "total_tarjeta": sales["total_debito"] + sales["total_credito"],
+                  "total_gastos": gastos_turno, "gastos_dia": gastos_turno}
+        values.update({k: v for k, v in legacy.items() if k in columns})
+        assignments = ", ".join(f"{name}=?" for name in values if name in columns)
+        conn.execute(f"UPDATE arqueo_diario SET {assignments} WHERE id=(SELECT id FROM arqueo_diario WHERE fecha=? ORDER BY id DESC LIMIT 1)",
+                     tuple(values[name] for name in values if name in columns) + (fecha,))
         conn.commit()
     except Exception:
         conn.rollback(); raise
     finally:
-        cursor.close(); conn.close()
+        conn.close()
     return consultar_arqueo_fecha(fecha)

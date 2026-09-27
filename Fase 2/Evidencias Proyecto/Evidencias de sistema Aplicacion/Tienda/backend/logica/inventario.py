@@ -1,180 +1,127 @@
-"""Consultas de inventario sobre MariaDB."""
+"""Consultas de inventario sobre la base SQLite local de Girasol."""
 from __future__ import annotations
-
 from typing import Any
-
-from backend.db.conexion import conectar_mydb
+from backend.db.conexion import conectar_db
 
 STOCK_BAJO_MAXIMO = 5
 
 
 def _existe_tabla(conn, nombre: str) -> bool:
-    cursor = conn.cursor()
-    try:
-        cursor.execute("SHOW TABLES LIKE %s", (nombre,))
-        return cursor.fetchone() is not None
-    finally:
-        cursor.close()
+    return conn.execute(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?)",
+        (nombre,),
+    ).fetchone()[0] == 1
+
+
+def _categoria_sql(conn) -> str:
+    if not _existe_tabla(conn, "seccionRopa"):
+        return "'Sin categoría'"
+    return """COALESCE((
+        SELECT TRIM(s.nombreSeccionRopa)
+        FROM seccionRopa s
+        WHERE LOWER(TRIM(p.nombre)) LIKE '%' || LOWER(TRIM(s.nombreSeccionRopa)) || '%'
+        ORDER BY LENGTH(TRIM(s.nombreSeccionRopa)) DESC LIMIT 1
+    ), 'Sin categoría')"""
 
 
 def consultar_inventario_ropa(search: str = "", marca: str = "") -> list[dict[str, Any]]:
-    """Lista productos y calcula stock total por producto usando variantes."""
-    conn = conectar_mydb()
-    cursor = conn.cursor(dictionary=True)
+    """Lista prendas y busca por nombre o código de barras, solo mediante SELECT."""
+    conn = conectar_db()
     try:
-        sql = """
-            SELECT p.id_producto AS id,
-                   TRIM(p.nombre) AS nombre,
-                   TRIM(m.nombre) AS marca,
-                   p.precio_venta AS precio,
-                   COALESCE(SUM(v.stock_actual), 0) AS stock,
-                   TRIM(p.codigo_base) AS barcode,
-                   'Sin categoría' AS categoria
-            FROM producto p
-            LEFT JOIN marca m ON m.id_marca = p.id_marca
-            LEFT JOIN variante_producto v ON v.id_producto = p.id_producto
-            WHERE 1=1
-        """
-        params: list[Any] = []
-        term = (search or "").strip()
-        marca_filter = (marca or "").strip()
-        if term:
-            like = f"%{term}%"
-            sql += " AND (LOWER(TRIM(p.nombre)) LIKE LOWER(%s) OR LOWER(TRIM(p.codigo_base)) LIKE LOWER(%s)) "
-            params.extend([like, like])
-        if marca_filter:
-            sql += " AND LOWER(TRIM(m.nombre)) LIKE LOWER(%s) "
-            params.append(f"%{marca_filter}%")
-        sql += " GROUP BY p.id_producto, p.nombre, m.nombre, p.precio_venta, p.codigo_base ORDER BY TRIM(p.nombre), p.id_producto"
-        cursor.execute(sql, params)
-        rows = cursor.fetchall()
-        return [{
-            "id": row["id"],
-            "Prenda": row["nombre"],
-            "tipo": row["categoria"],
-            "Marca": row["marca"],
-            "Precio": row["precio"],
-            "Total Stock": int(row["stock"] or 0),
-            "barcode": row["barcode"],
-        } for row in rows]
+        categoria_sql = _categoria_sql(conn)
+        rows = conn.execute(f"""
+            SELECT p.id_prenda AS id, TRIM(p.nombre) AS nombre,
+                   TRIM(p.marca) AS marca, p.precio, p.stock,
+                   TRIM(p.barcode) AS barcode, {categoria_sql} AS categoria
+            FROM prenda p
+            WHERE (LOWER(TRIM(p.nombre)) LIKE LOWER(?)
+               OR LOWER(TRIM(p.barcode)) LIKE LOWER(?))
+              AND (? = '' OR LOWER(TRIM(p.marca)) LIKE LOWER(?))
+            ORDER BY TRIM(p.nombre), p.id_prenda
+        """, (f"%{search.strip()}%", f"%{search.strip()}%",
+              marca.strip(), f"%{marca.strip()}%")).fetchall()
+        return [{"id": r["id"], "Prenda": r["nombre"], "tipo": r["categoria"],
+                 "Marca": r["marca"], "Precio": r["precio"],
+                 "Total Stock": r["stock"], "barcode": r["barcode"]} for r in rows]
     finally:
-        cursor.close()
         conn.close()
 
 
 def obtener_resumen_inventario(stock_bajo_maximo: int = STOCK_BAJO_MAXIMO) -> dict[str, int]:
-    """Obtiene métricas del inventario usando variantes y marcas."""
-    conn = conectar_mydb()
-    cursor = conn.cursor()
+    """Obtiene las cuatro métricas con SELECT agregados independientes del listado."""
+    conn = conectar_db()
     try:
-        cursor.execute(
-            """
-            SELECT
-                COUNT(DISTINCT p.id_producto) AS prendas_registradas,
-                COALESCE(SUM(v.stock_actual), 0) AS unidades_disponibles,
-                COUNT(DISTINCT CASE WHEN v.stock_actual <= %s THEN p.id_producto END) AS stock_bajo
-            FROM producto p
-            LEFT JOIN variante_producto v ON v.id_producto = p.id_producto
-            """,
-            (stock_bajo_maximo,),
-        )
-        row = cursor.fetchone()
-        cursor.execute("SELECT COUNT(*) FROM marca")
-        marcas = cursor.fetchone()[0]
-        return {
-            "prendas_registradas": int(row[0] or 0),
-            "unidades_disponibles": int(row[1] or 0),
-            "marcas": int(marcas or 0),
-            "stock_bajo": int(row[2] or 0),
-            "umbral_stock_bajo": int(stock_bajo_maximo),
-        }
+        row = conn.execute("""
+            SELECT COUNT(*) AS prendas_registradas,
+                   COALESCE(SUM(CASE WHEN stock > 0 THEN stock ELSE 0 END), 0) AS unidades_disponibles,
+                   COALESCE(SUM(CASE WHEN stock <= ? THEN 1 ELSE 0 END), 0) AS stock_bajo
+            FROM prenda
+        """, (stock_bajo_maximo,)).fetchone()
+        marcas = conn.execute("SELECT COUNT(*) FROM marcas").fetchone()[0]
+        return {"prendas_registradas": int(row["prendas_registradas"] or 0),
+                "unidades_disponibles": int(row["unidades_disponibles"] or 0),
+                "marcas": int(marcas or 0),
+                "stock_bajo": int(row["stock_bajo"] or 0),
+                "umbral_stock_bajo": int(stock_bajo_maximo)}
     finally:
-        cursor.close()
         conn.close()
 
 
 def obtener_categorias() -> list[dict[str, Any]]:
-    """En este esquema no hay categorías definidas; devuelve vacío."""
-    return []
+    """Lista secciones si existen; en el esquema reducido usa familiaRopa."""
+    conn = conectar_db()
+    try:
+        if _existe_tabla(conn, "seccionRopa"):
+            rows = conn.execute("""
+                SELECT s.idSeccionRopa AS id, TRIM(s.nombreSeccionRopa) AS nombre,
+                       TRIM(f.nombreFamilia) AS familia
+                FROM seccionRopa s JOIN familiaRopa f ON f.idFamiliaRopa=s.idFamiliaRopa
+                ORDER BY f.nombreFamilia, s.nombreSeccionRopa
+            """).fetchall()
+        else:
+            rows = conn.execute("""
+                SELECT idFamiliaRopa AS id, TRIM(nombreFamilia) AS nombre,
+                       TRIM(nombreFamilia) AS familia
+                FROM familiaRopa ORDER BY nombreFamilia
+            """).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        conn.close()
 
 
 def obtener_producto_por_codigo(codigo_barra: str) -> dict[str, Any] | None:
-    conn = conectar_mydb()
-    cursor = conn.cursor(dictionary=True)
+    conn = conectar_db()
     try:
-        cursor.execute(
-            """
-            SELECT p.id_producto AS id,
-                   TRIM(p.nombre) AS nombre,
-                   p.precio_venta AS precio,
-                   COALESCE(SUM(v.stock_actual), 0) AS stock,
-                   TRIM(p.codigo_base) AS barcode,
-                   TRIM(m.nombre) AS marca
-            FROM producto p
-            LEFT JOIN marca m ON m.id_marca = p.id_marca
-            LEFT JOIN variante_producto v ON v.id_producto = p.id_producto
-            WHERE TRIM(p.codigo_base) = TRIM(%s)
-            GROUP BY p.id_producto, p.nombre, p.precio_venta, p.codigo_base, m.nombre
-            LIMIT 1
-            """,
-            (codigo_barra,),
-        )
-        row = cursor.fetchone()
-        if row is None:
-            return None
-        return {
-            "id": row["id"],
-            "nombre": row["nombre"],
-            "precio": row["precio"],
-            "stock": int(row["stock"] or 0),
-            "barcode": row["barcode"],
-            "marca": row["marca"],
-        }
+        row = conn.execute("""
+            SELECT id_prenda AS id, TRIM(nombre) AS nombre, precio, stock,
+                   TRIM(barcode) AS barcode, TRIM(marca) AS marca
+            FROM prenda WHERE TRIM(barcode)=TRIM(?) LIMIT 1
+        """, (codigo_barra,)).fetchone()
+        return dict(row) if row else None
     finally:
-        cursor.close()
         conn.close()
+
 
 
 def crear_prenda(*, nombre: str, marca: str | None, precio: int, stock: int,
                   barcode: str | None = None, tipo: str | None = None) -> dict[str, Any]:
-    """Crea producto y su variante inicial usando la estructura MariaDB."""
-    nombre = (nombre or "").strip()
-    marca = (marca or "").strip()
-    barcode = (barcode or "").strip()
+    """Alta usada por el API al confirmar un ingreso de mercadería."""
+    nombre, marca, barcode = nombre.strip(), (marca or '').strip(), (barcode or '').strip()
     if not nombre or not marca or not barcode:
         raise ValueError("Nombre, marca y código de barra son obligatorios")
-    conn = conectar_mydb()
-    cursor = conn.cursor()
+    conn = conectar_db()
     try:
-        cursor.execute("SELECT id_marca FROM marca WHERE LOWER(TRIM(nombre)) = LOWER(%s) LIMIT 1", (marca,))
-        row = cursor.fetchone()
-        if row is None:
-            cursor.execute("INSERT INTO marca (nombre) VALUES (%s)", (marca,))
-            marca_id = cursor.lastrowid
-        else:
-            marca_id = row[0]
-
-        cursor.execute(
-            "SELECT 1 FROM producto WHERE TRIM(codigo_base) = TRIM(%s) LIMIT 1",
-            (barcode,),
-        )
-        if cursor.fetchone():
+        if conn.execute("SELECT 1 FROM prenda WHERE TRIM(barcode)=TRIM(?)", (barcode,)).fetchone():
             raise ValueError("Ya existe una prenda con ese código de barra")
-
-        cursor.execute(
-            "INSERT INTO producto (id_marca, codigo_base, nombre, descripcion, precio_venta) VALUES (%s, %s, %s, %s, %s)",
-            (marca_id, barcode, nombre, f"Creado desde la app. {' / '.join(filter(None, [tipo])) or ''}", int(precio)),
-        )
-        producto_id = cursor.lastrowid
-        cursor.execute(
-            "INSERT INTO variante_producto (id_producto, sku, talla, color, stock_actual) VALUES (%s, %s, %s, %s, %s)",
-            (producto_id, barcode, "UN", "GEN", int(stock)),
+        cursor = conn.execute(
+            "INSERT INTO prenda (nombre, marca, precio, stock, barcode) VALUES (?, ?, ?, ?, ?)",
+            (nombre, marca, int(precio), int(stock), barcode),
         )
         conn.commit()
-        return {"id": producto_id, "nombre": nombre, "marca": marca, "precio": int(precio), "stock": int(stock), "barcode": barcode}
+        return {"id": cursor.lastrowid, "nombre": nombre, "marca": marca,
+                "precio": int(precio), "stock": int(stock), "barcode": barcode}
     except Exception:
         conn.rollback()
         raise
     finally:
-        cursor.close()
         conn.close()
