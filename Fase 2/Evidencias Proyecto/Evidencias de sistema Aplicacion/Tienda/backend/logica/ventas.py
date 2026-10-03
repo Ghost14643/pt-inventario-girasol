@@ -10,7 +10,19 @@ def _rut_numero(rut):
     return int(raw)
 
 
-def registrar_venta(subtotal, productos, descuento_total, metodo_pago, rut_empleado, cliente_rut=None):
+def registrar_venta(
+    subtotal,
+    productos,
+    descuento_total,
+    metodo_pago,
+    rut_empleado,
+    cliente_rut=None,
+    ultimos_4_digitos=None,
+    codigo_autorizacion=None,
+    numero_comprobante=None,
+    cantidad_cuotas=1,
+    marca_tarjeta=None,
+):
     """Registra una venta usando el esquema MariaDB definido en los SQL de Docker."""
     if not productos:
         raise ValueError("La venta debe contener al menos un producto")
@@ -21,6 +33,41 @@ def registrar_venta(subtotal, productos, descuento_total, metodo_pago, rut_emple
 
     if metodo_pago not in {"efectivo", "debito", "credito", "credito_girasol", "transferencia", "otro"}:
         raise ValueError("Método de pago inválido")
+
+    es_pago_tarjeta = metodo_pago in {"debito", "credito"}
+
+    if es_pago_tarjeta:
+        ultimos_4_digitos = str(ultimos_4_digitos or "").strip()
+        codigo_autorizacion = str(codigo_autorizacion or "").strip()
+        numero_comprobante = str(numero_comprobante or "").strip()
+
+        if (
+            len(ultimos_4_digitos) != 4
+            or not ultimos_4_digitos.isascii()
+            or not ultimos_4_digitos.isdigit()
+        ):
+            raise ValueError("Los últimos 4 dígitos de la tarjeta son obligatorios y deben ser numéricos")
+
+        if not codigo_autorizacion or len(codigo_autorizacion) > 20:
+            raise ValueError("El código de autorización es obligatorio y no debe superar 20 caracteres")
+
+        if not numero_comprobante or len(numero_comprobante) > 30:
+            raise ValueError("El número de comprobante es obligatorio y no debe superar 30 caracteres")
+
+        try:
+            cantidad_cuotas = int(cantidad_cuotas)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("La cantidad de cuotas debe ser válida") from exc
+
+        if cantidad_cuotas < 1:
+            raise ValueError("La cantidad de cuotas debe ser mayor que cero")
+
+        if metodo_pago == "debito":
+            cantidad_cuotas = 1
+
+        marca_tarjeta = str(marca_tarjeta or "").strip() or None
+        if marca_tarjeta is not None and len(marca_tarjeta) > 30:
+            raise ValueError("La marca de tarjeta no debe superar 30 caracteres")
 
     cantidades = {}
     for producto in productos:
@@ -38,6 +85,7 @@ def registrar_venta(subtotal, productos, descuento_total, metodo_pago, rut_emple
     mysql_conn = conectar_mydb()
     mysql_cursor = mysql_conn.cursor(dictionary=True)
     try:
+        mysql_conn.start_transaction()
         ids = tuple(cantidades.keys())
         if not ids:
             raise ValueError("La venta debe contener al menos un producto")
@@ -75,9 +123,15 @@ def registrar_venta(subtotal, productos, descuento_total, metodo_pago, rut_emple
         if int(subtotal) != subtotal_calculado:
             raise ValueError(f"El subtotal no coincide con los precios vigentes: esperado {subtotal_calculado}")
 
-        descuento = int(descuento_total)
-        if descuento < 0 or descuento > subtotal_calculado:
-            raise ValueError("El descuento debe estar entre cero y el subtotal")
+        try:
+            descuento = int(descuento_total)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("El descuento debe ser un porcentaje válido") from exc
+
+        if descuento < 0 or descuento > 100:
+            raise ValueError("El descuento debe estar entre 0 y 100 por ciento")
+
+        monto_descuento = (subtotal_calculado * descuento + 50) // 100
 
         empleado_rut = _rut_numero(rut_empleado)
         mysql_cursor.execute("SELECT id_usuario FROM usuario WHERE rut_usuario = %s", (empleado_rut,))
@@ -106,12 +160,35 @@ def registrar_venta(subtotal, productos, descuento_total, metodo_pago, rut_emple
         if metodo is None:
             raise ValueError(f"El método de pago {metodo_pago} no existe")
 
-        total = subtotal_calculado - descuento
+        total = subtotal_calculado - monto_descuento
         mysql_cursor.execute(
             "INSERT INTO venta (fecha, id_usuario, rut_cliente, id_metodo_pago, subtotal, descuento, total) VALUES (%s, %s, %s, %s, %s, %s, %s)",
             (datetime.now(), empleado["id_usuario"], None if metodo_pago != "credito_girasol" else cliente_rut_num, metodo["id_metodo_pago"], subtotal_calculado, descuento, total),
         )
         id_venta = mysql_cursor.lastrowid
+
+        if es_pago_tarjeta:
+            mysql_cursor.execute(
+                """
+                INSERT INTO pago_tarjeta (
+                    id_venta,
+                    ultimos_4_digitos,
+                    codigo_autorizacion,
+                    numero_comprobante,
+                    cantidad_cuotas,
+                    marca_tarjeta
+                )
+                VALUES (%s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    id_venta,
+                    ultimos_4_digitos,
+                    codigo_autorizacion,
+                    numero_comprobante,
+                    cantidad_cuotas,
+                    marca_tarjeta,
+                ),
+            )
 
         for producto_id, id_variante, nombre_producto, cantidad, precio_unitario, total_producto in items:
             mysql_cursor.execute(

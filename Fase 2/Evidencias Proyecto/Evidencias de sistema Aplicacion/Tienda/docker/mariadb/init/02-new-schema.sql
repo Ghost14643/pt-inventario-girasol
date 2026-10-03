@@ -200,3 +200,17 @@ CREATE TABLE arqueo_detalle_pago (
   CONSTRAINT fk_arqdet_metodo FOREIGN KEY (id_metodo_pago) REFERENCES metodo_pago (id_metodo_pago),
   CONSTRAINT ck_arqdet_montos CHECK (monto_esperado >= 0 AND monto_contado >= 0)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE pago_tarjeta (
+  id_pago_tarjeta     INT AUTO_INCREMENT PRIMARY KEY,
+  id_venta            INT NOT NULL,
+  ultimos_4_digitos   CHAR(4) NOT NULL,
+  codigo_autorizacion VARCHAR(20) NOT NULL,
+  numero_comprobante  VARCHAR(30) NOT NULL,
+  cantidad_cuotas     INT NOT NULL DEFAULT 1,
+  marca_tarjeta       VARCHAR(30) NULL,
+  CONSTRAINT uq_pago_tarjeta_venta UNIQUE (id_venta),
+  CONSTRAINT fk_pago_tarjeta_venta FOREIGN KEY (id_venta) REFERENCES venta (id_venta),
+  CONSTRAINT ck_pago_tarjeta_cuotas CHECK (cantidad_cuotas > 0),
+  CONSTRAINT ck_pago_tarjeta_digitos CHECK (ultimos_4_digitos REGEXP '^[0-9]{4}$')
+);
