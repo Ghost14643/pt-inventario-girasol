@@ -1,10 +1,12 @@
 import os
 import mysql.connector
-from flask import Flask, render_template, request, redirect, url_for, session, jsonify
-from datetime import datetime
+import sqlite3
+from flask import Flask, render_template, request, redirect, url_for,session,jsonify
+from datetime import datetime, timedelta
+#from werkzeug.security import check_password_hash       
 import hashlib
 import hmac
-
+#Isa podrias borrar en la template de dashboard los top items y las recent sales?
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY")
 if not app.secret_key:
@@ -14,14 +16,13 @@ BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads')
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
+DB_PATH = os.getenv("GIRASOL_DB_PATH", "reuso.db")
 
 def hashear_contraseña(contraseña):
     hash_obj = hashlib.sha256(contraseña.encode('utf-8'))
     return hash_obj.hexdigest()
 
-
-# Conexión única a MariaDB del proyecto. El esquema canónico es el definido en
-# docker/mariadb/init/01-create-db.sql y 02-new-schema.sql.
+# Conexión a MySQL
 def get_connection():
     return mysql.connector.connect(
         host=os.getenv("MYSQL_HOST", "mariadb"),
@@ -30,6 +31,10 @@ def get_connection():
         password=os.environ["MYSQL_PASSWORD"],
         database=os.getenv("MYSQL_DATABASE", "tienda_online")
     )
+def get_sqlite():
+    con = sqlite3.connect(DB_PATH)
+    con.row_factory = sqlite3.Row
+    return con
 
 @app.route('/')
 def index():
@@ -47,18 +52,17 @@ def login():
 
         conn = get_connection()
         cursor = conn.cursor(dictionary=True)
-        cursor.execute(
-            "SELECT rut_usuario, password FROM usuario WHERE rut_usuario = %s",
-            (int(username),),
-        )
+        cursor.execute("SELECT RUT, PASSWORD FROM usuario WHERE RUT = %s", (username,))
         usuario = cursor.fetchone()
         cursor.close()
         conn.close()
 
-        if usuario and hmac.compare_digest(str(usuario["password"]), hashear_contraseña(password)):
-            session["username"] = str(usuario["rut_usuario"])
+        # Validación con hash
+        if usuario and hmac.compare_digest(str(usuario["PASSWORD"]), hashear_contraseña(password)):
+            session["username"] = username
             return redirect(url_for("index"))
-        return "Usuario o contraseña incorrectos"
+        else:
+            return "Usuario o contraseña incorrectos"
 
     if "username" in session:
         return redirect(url_for("index"))
@@ -81,55 +85,53 @@ def dashboard():
 
 @app.route("/api/summary")
 def api_summary():
-    conn = get_connection()
-    cursor = conn.cursor(dictionary=True)
-    today = datetime.now().strftime("%Y-%m-%d")
-    cursor.execute(
-        """
-        SELECT
-            COALESCE(SUM(v.total), 0) AS revenue,
-            COUNT(v.id_venta) AS orders,
-            COALESCE(SUM(dv.cantidad), 0) AS units
-        FROM venta v
-        LEFT JOIN detalle_venta dv ON dv.id_venta = v.id_venta
-        WHERE DATE(v.fecha) = %s
-        """,
-        (today,),
-    )
-    row = cursor.fetchone() or {"revenue": 0, "orders": 0, "units": 0}
-    cursor.close()
-    conn.close()
+    con = get_sqlite()
+    today     = datetime.now().strftime("%Y-%m-%d")
+    yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
 
-    revenue = float(row["revenue"] or 0)
-    orders = int(row["orders"] or 0)
-    units = int(row["units"] or 0)
-    avg_ticket = revenue / orders if orders else 0
+    def stats(date):
+        r = con.execute("""
+            SELECT
+                COALESCE(SUM(b.totalFinal), 0)       AS revenue,
+                COUNT(DISTINCT b.idBoleta)            AS orders,
+                COALESCE(SUM(db.cantidad), 0)         AS units
+            FROM boleta b
+            INNER JOIN detalleBoleta db
+                ON b.idBoleta = db.idBoleta
+            WHERE b.fechaHora LIKE ?
+        """, (date + "%",)).fetchone()
+        return dict(r)
+
+    t, y = stats(today), stats(yesterday)
+    con.close()
+
+    def pct(a, b):
+        return round((a - b) / b * 100, 1) if b else 0
+
     return jsonify({
-        "revenue": {"value": revenue, "delta": 0},
-        "orders": {"value": orders, "delta": 0},
-        "units": {"value": units, "delta": 0},
-        "avg_ticket": {"value": avg_ticket, "delta": 0},
+        "revenue":    {"value": round(t["revenue"], 2),  "delta": pct(t["revenue"],  y["revenue"])},
+        "orders":     {"value": t["orders"],              "delta": pct(t["orders"],   y["orders"])},
+        "units":      {"value": t["units"],               "delta": pct(t["units"],    y["units"])},
+        "avg_ticket": {"value": round(t["revenue"] / t["orders"], 2) if t["orders"] else 0,
+                       "delta": 0},
     })
+
 
 
 @app.route("/api/weekly")
 def api_weekly():
-    conn = get_connection()
-    cursor = conn.cursor(dictionary=True)
-    cursor.execute(
-        """
-        SELECT DATE(v.fecha) AS day,
-               ROUND(SUM(v.total), 2) AS revenue
-        FROM venta v
-        WHERE v.fecha >= DATE_SUB(CURDATE(), INTERVAL 6 DAY)
-        GROUP BY DATE(v.fecha)
-        ORDER BY DATE(v.fecha)
-        """
-    )
-    rows = cursor.fetchall()
-    cursor.close()
-    conn.close()
-    return jsonify(rows)
+    con = get_sqlite()
+    rows = con.execute("""
+        SELECT 
+            DATE(fechaHora) AS day,
+            ROUND(SUM(totalFinal),2) AS revenue
+        FROM boleta
+        WHERE fechaHora >= DATE('now','-6 days')
+        GROUP BY day
+        ORDER BY day
+    """).fetchall()
+    con.close()
+    return jsonify([dict(r) for r in rows])
 #------------------------------------------------
 @app.route('/roles', methods=['POST', 'GET'])
 def roles():
@@ -138,8 +140,7 @@ def roles():
 
     cursor.execute("""
         SELECT nombre, id_rol
-        FROM usuario
-        ORDER BY nombre;
+        FROM usuario;
     """)
 
     usuario = cursor.fetchall()
@@ -168,32 +169,26 @@ def guardar_usuario():
     cursor = conn.cursor()
 
     if modo == "nuevo":
-        cursor.execute(
-            """
-            INSERT INTO usuario (rut_usuario, dvrut_usuario, nombre, id_rol, password)
-            VALUES (%s, %s, %s, %s, %s)
-            """,
-            (int(rut), str(dv), usuario, int(rol), psshash),
-        )
+
+        cursor.execute("""
+        insert into usuario (rut, digito_ver, nombre, id_rol, password)
+        VALUES(%s,%s,%s,%s,%s)
+        """,(rut,dv,usuario,rol,psshash,))
+
     else:
+
         if password != "":
-            cursor.execute(
-                """
-                UPDATE usuario
-                SET password=%s, id_rol=%s
-                WHERE nombre=%s
-                """,
-                (psshash, int(rol), usuario),
-            )
+            cursor.execute("""
+            UPDATE usuario
+            SET password=%s, id_rol=%s
+            WHERE nombre=%s
+            """,(psshash,rol,usuario))
         else:
-            cursor.execute(
-                """
-                UPDATE usuario
-                SET id_rol=%s
-                WHERE nombre=%s
-                """,
-                (int(rol), usuario),
-            )
+            cursor.execute("""
+            UPDATE usuario
+            SET id_rol=%s
+            WHERE nombre=%s
+            """,(rol,usuario))
 
     conn.commit()
 
