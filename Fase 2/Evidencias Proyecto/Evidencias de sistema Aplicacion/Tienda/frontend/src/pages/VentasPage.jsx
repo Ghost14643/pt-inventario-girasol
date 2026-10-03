@@ -36,6 +36,13 @@ export function VentasPage({ session, ...props }) {
   const [selectedClient, setSelectedClient] = React.useState(null);
   const [manualClientRut, setManualClientRut] = React.useState("");
   const [searching, setSearching] = React.useState(false);
+  const [cardPayment, setCardPayment] = React.useState({
+    ultimos_4_digitos: "",
+    codigo_autorizacion: "",
+    numero_comprobante: "",
+    cantidad_cuotas: "1",
+    marca_tarjeta: "",
+  });
   React.useEffect(() => {
     if (method !== "credito_girasol" || clientSearch.trim().length < 2) {
       setClientResults([]);
@@ -88,7 +95,44 @@ export function VentasPage({ session, ...props }) {
     0,
   );
   const creditInvalid = method === "credito_girasol" && !selectedClient;
+  const isCardPayment = method === "debito" || method === "credito";
   async function sell() {
+    if (isCardPayment) {
+      if (!/^\d{4}$/.test(cardPayment.ultimos_4_digitos)) {
+        setMsg("Ingresa los 4 últimos dígitos de la tarjeta.");
+        return;
+      }
+
+      if (
+        !cardPayment.codigo_autorizacion.trim() ||
+        cardPayment.codigo_autorizacion.trim().length > 20
+      ) {
+        setMsg("Ingresa un código de autorización de hasta 20 caracteres.");
+        return;
+      }
+
+      if (
+        !cardPayment.numero_comprobante.trim() ||
+        cardPayment.numero_comprobante.trim().length > 30
+      ) {
+        setMsg("Ingresa un número de comprobante de hasta 30 caracteres.");
+        return;
+      }
+
+      const cuotas =
+        method === "debito" ? 1 : Number(cardPayment.cantidad_cuotas);
+      if (!Number.isInteger(cuotas) || cuotas < 1) {
+        setMsg(
+          "La cantidad de cuotas debe ser un número entero mayor que cero.",
+        );
+        return;
+      }
+
+      if (cardPayment.marca_tarjeta.trim().length > 30) {
+        setMsg("La marca de tarjeta no debe superar 30 caracteres.");
+        return;
+      }
+    }
     if (method === "credito_girasol") {
       let resolvedClient = selectedClient;
       if (!resolvedClient && manualClientRut.trim()) {
@@ -143,11 +187,26 @@ export function VentasPage({ session, ...props }) {
         metodo_pago: method,
         rut_empleado: session.rut || "sistema",
         cliente_rut: null,
+        ...(isCardPayment && {
+          ultimos_4_digitos: cardPayment.ultimos_4_digitos,
+          codigo_autorizacion: cardPayment.codigo_autorizacion.trim(),
+          numero_comprobante: cardPayment.numero_comprobante.trim(),
+          cantidad_cuotas:
+            method === "debito" ? 1 : Number(cardPayment.cantidad_cuotas),
+          marca_tarjeta: cardPayment.marca_tarjeta.trim() || null,
+        }),
       });
       setItems([]);
       setSelectedClient(null);
       setClientSearch("");
       setManualClientRut("");
+      setCardPayment({
+        ultimos_4_digitos: "",
+        codigo_autorizacion: "",
+        numero_comprobante: "",
+        cantidad_cuotas: "1",
+        marca_tarjeta: "",
+      });
       setMsg("Venta registrada correctamente.");
     } catch (error) {
       setMsg(
@@ -276,6 +335,103 @@ export function VentasPage({ session, ...props }) {
               </button>
             ))}
           </div>
+          {isCardPayment && (
+            <div className="girasol-credit card-payment">
+              <div className="girasol-credit__title">
+                <CreditCard />
+                <div>
+                  <strong>Datos del pago con tarjeta</strong>
+                  <small>Completa los datos del comprobante</small>
+                </div>
+              </div>
+
+              <div className="card-payment__fields">
+                <label>
+                  Últimos 4 dígitos
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={4}
+                    placeholder="Ej: 1234"
+                    value={cardPayment.ultimos_4_digitos}
+                    onChange={(event) =>
+                      setCardPayment((current) => ({
+                        ...current,
+                        ultimos_4_digitos: event.target.value
+                          .replace(/\D/g, "")
+                          .slice(0, 4),
+                      }))
+                    }
+                  />
+                </label>
+
+                <label>
+                  Código de autorización
+                  <input
+                    type="text"
+                    maxLength={20}
+                    value={cardPayment.codigo_autorizacion}
+                    onChange={(event) =>
+                      setCardPayment((current) => ({
+                        ...current,
+                        codigo_autorizacion: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+
+                <label>
+                  Número de comprobante
+                  <input
+                    type="text"
+                    maxLength={30}
+                    value={cardPayment.numero_comprobante}
+                    onChange={(event) =>
+                      setCardPayment((current) => ({
+                        ...current,
+                        numero_comprobante: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+
+                <label>
+                  Cuotas
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    disabled={method === "debito"}
+                    value={
+                      method === "debito" ? 1 : cardPayment.cantidad_cuotas
+                    }
+                    onChange={(event) =>
+                      setCardPayment((current) => ({
+                        ...current,
+                        cantidad_cuotas: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+
+                <label>
+                  Marca de tarjeta (opcional)
+                  <input
+                    type="text"
+                    maxLength={30}
+                    placeholder="Ej: Visa"
+                    value={cardPayment.marca_tarjeta}
+                    onChange={(event) =>
+                      setCardPayment((current) => ({
+                        ...current,
+                        marca_tarjeta: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+              </div>
+            </div>
+          )}
           {method === "credito_girasol" && (
             <div className="girasol-credit">
               <div className="girasol-credit__title">
