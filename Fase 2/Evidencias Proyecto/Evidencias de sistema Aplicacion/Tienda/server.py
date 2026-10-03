@@ -17,7 +17,7 @@ from typing import Annotated, Any, Literal
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel, Field
 
 # Permite que el binario PyInstaller encuentre backend/ al ejecutarse como sidecar.
@@ -160,6 +160,27 @@ class ClientCreateRequest(BaseModel):
 
 class PrintRequest(BaseModel):
     payload: dict[str, Any]
+
+
+@app.get("/", include_in_schema=False)
+def root() -> HTMLResponse:
+    return HTMLResponse(
+        content="""
+        <html>
+            <head><title>Tienda API</title></head>
+            <body>
+                <h1>Tienda Local API</h1>
+                <p>La API está ejecutándose correctamente.</p>
+                <p>Consulta <a href="/docs">/docs</a> para ver los endpoints disponibles.</p>
+            </body>
+        </html>
+        """
+    )
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon() -> Response:
+    return Response(status_code=204)
 
 
 @app.get("/health")

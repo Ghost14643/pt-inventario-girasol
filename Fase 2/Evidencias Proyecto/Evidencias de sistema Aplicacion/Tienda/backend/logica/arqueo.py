@@ -84,6 +84,23 @@ def abrir_caja(fecha: str) -> dict[str, Any]:
         conn.close()
 
 
+def _normalizar_metodo_pago(nombre: str | None) -> str:
+    value = (nombre or "").strip().lower()
+    replacements = str.maketrans({"á": "a", "é": "e", "í": "i", "ó": "o", "ú": "u", "ü": "u", "ñ": "n"})
+    value = value.translate(replacements)
+    value = value.replace(" ", "_")
+    value = value.replace("-", "_")
+    aliases = {
+        "efectivo": "efectivo",
+        "debito": "debito",
+        "credito": "credito",
+        "credito_girasol": "credito_girasol",
+        "transferencia": "transferencia",
+        "otro": "otro",
+    }
+    return aliases.get(value, "otro")
+
+
 def _ventas_del_turno(fecha: str, apertura_at: str | None) -> dict[str, Any]:
     inicio = apertura_at or f"{fecha} 00:00:00"
     fin = (date.fromisoformat(fecha) + timedelta(days=1)).isoformat() + " 00:00:00"
@@ -92,16 +109,35 @@ def _ventas_del_turno(fecha: str, apertura_at: str | None) -> dict[str, Any]:
         raise ConnectionError("No fue posible conectar con MariaDB para recopilar las ventas")
     cursor = conn.cursor(dictionary=True)
     try:
-        cursor.execute("""SELECT LOWER(metodo_pago) metodo, COUNT(*) cantidad, COALESCE(SUM(total),0) total
-            FROM ventas WHERE fecha >= %s AND fecha < %s GROUP BY LOWER(metodo_pago)""", (inicio, fin))
+        cursor.execute("SHOW TABLES LIKE 'venta'")
+        usa_tabla_nueva = cursor.fetchone() is not None
+
+        if usa_tabla_nueva:
+            cursor.execute(
+                """SELECT LOWER(mp.nombre) metodo, COUNT(*) cantidad, COALESCE(SUM(v.total),0) total
+                    FROM venta v
+                    JOIN metodo_pago mp ON mp.id_metodo_pago = v.id_metodo_pago
+                    WHERE v.fecha >= %s AND v.fecha < %s
+                    GROUP BY LOWER(mp.nombre)""",
+                (inicio, fin),
+            )
+        else:
+            cursor.execute(
+                """SELECT LOWER(metodo_pago) metodo, COUNT(*) cantidad, COALESCE(SUM(total),0) total
+                    FROM ventas WHERE fecha >= %s AND fecha < %s GROUP BY LOWER(metodo_pago)""",
+                (inicio, fin),
+            )
         rows = cursor.fetchall()
     finally:
         cursor.close(); conn.close()
     totals = {key: 0.0 for key in ("efectivo", "debito", "credito", "credito_girasol", "transferencia", "otro")}
     count = 0
     for row in rows:
-        method = row["metodo"] if row["metodo"] in totals else "otro"
-        totals[method] += float(row["total"] or 0); count += int(row["cantidad"] or 0)
+        method = _normalizar_metodo_pago(row.get("metodo"))
+        if method not in totals:
+            method = "otro"
+        totals[method] += float(row["total"] or 0)
+        count += int(row["cantidad"] or 0)
     return {"ventas_cantidad": count, **{f"total_{key}": value for key, value in totals.items()}, "total_ventas": sum(totals.values())}
 
 
