@@ -37,6 +37,8 @@ export const inventoryService = {
 
 export const salesService = {
   create: (payload) => api.post("/sales", payload).then((r) => r.data),
+  estimateCredit: (payload) =>
+    api.post("/credits/estimate", payload).then((r) => r.data),
 };
 export const scannerWsUrl = () =>
   API_BASE_URL.replace(/^http/, "ws") + "/ws/scanner";
@@ -57,6 +59,11 @@ export const clientService = {
   summary: () => api.get("/clients/summary").then((r) => r.data),
   create: (payload) => api.post("/clients", payload).then((r) => r.data),
   credit: (rut) => api.get(`/clients/${rut}/credit`).then((r) => r.data),
+  creditDetail: (rut, id) =>
+    api.get(`/clients/${rut}/credit/${id}`).then((r) => r.data),
+  recordCreditPayment: (id, monto) =>
+    api.post(`/credits/${id}/payments`, { monto }).then((r) => r.data),
+  creditReports: () => api.get("/credit/reports").then((r) => r.data),
   creditSearch: (search) =>
     api
       .get("/clients/credit-search", { params: { search } })

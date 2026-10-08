@@ -134,7 +134,8 @@ Toda la lógica nueva está en `backend/logica/clientes.py`; `server.py` solo ad
 - `POST /sales` vuelve a calcular y bloquear el saldo de la clienta dentro de la transacción; rechaza la venta si supera `tope_credito`.
 - Una venta aprobada crea una hoja de crédito de una cuota, vencimiento a 30 días, pie cero y referencia al ID de venta.
 - Arqueo distingue Crédito Girasol del crédito bancario.
-- Actualmente las 43 clientas tienen `tope_credito=NULL`; aparecerán con $0 disponible hasta que se configuren límites reales. No se modificaron topes ni se registraron ventas de prueba.
+- Los niveles se asignan por créditos totalmente pagados a tiempo: Inicial (0-1) tiene un tope de $50.000 y hasta 3 cuotas; Recurrente (2-5) tiene $100.000 y hasta 6 cuotas; VIP (6 o más) tiene $200.000 y hasta 6 cuotas.
+- Los topes se calculan desde el historial nuevo de Crédito Girasol; clientas sin créditos puntuales registrados comienzan en Inicial. El tope heredado uniforme de $100.000 se trata como valor por defecto y no bloquea una promoción; los topes individuales distintos se conservan como máximo.
 
 
 ## Altas y bajas de empleados
