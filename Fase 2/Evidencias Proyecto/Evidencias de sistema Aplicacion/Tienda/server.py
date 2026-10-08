@@ -110,10 +110,15 @@ class SaleItem(BaseModel):
 class SaleRequest(BaseModel):
     subtotal: int = Field(ge=0)
     productos: list[SaleItem]
-    descuento_total: int = Field(default=0, ge=0)
+    descuento_total: int = Field(default=0, ge=0, le=100)
     metodo_pago: Literal["efectivo", "debito", "credito", "credito_girasol", "transferencia", "otro"] = "efectivo"
     rut_empleado: str
     cliente_rut: str | None = None
+    ultimos_4_digitos: str | None = Field(default=None, pattern=r"^[0-9]{4}$")
+    codigo_autorizacion: str | None = Field(default=None, max_length=20)
+    numero_comprobante: str | None = Field(default=None, max_length=30)
+    cantidad_cuotas: int = Field(default=1, ge=1)
+    marca_tarjeta: str | None = Field(default=None, max_length=30)
     registrar_arqueo: bool = False
 
 class MariaDbSaleItem(BaseModel):
@@ -431,6 +436,11 @@ def create_sale(data: SaleRequest) -> dict[str, Any]:
             metodo_pago=data.metodo_pago,
             rut_empleado=data.rut_empleado,
             cliente_rut=data.cliente_rut,
+            ultimos_4_digitos=data.ultimos_4_digitos,
+            codigo_autorizacion=data.codigo_autorizacion,
+            numero_comprobante=data.numero_comprobante,
+            cantidad_cuotas=data.cantidad_cuotas,
+            marca_tarjeta=data.marca_tarjeta,
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
