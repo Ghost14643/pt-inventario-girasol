@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
 
 from backend.db.mariadb import conectar_mariadb
+from backend.logica.credito import asegurar_esquema_credito, registrar_credito_venta
 
 
 CENTAVO = Decimal("0.01")
@@ -49,6 +51,8 @@ def registrar_venta(
     items: list[dict[str, Any]],
     descuento: Decimal | int | float | str = Decimal("0"),
     rut_cliente: int | None = None,
+    pie_credito: Decimal | int | float | None = None,
+    cuotas_credito: int = 3,
 ) -> dict[str, Any]:
     """Registra una venta completa en una única transacción MariaDB."""
 
@@ -71,9 +75,13 @@ def registrar_venta(
         raise ValueError("El descuento debe estar entre 0 y 100")
 
     connection = conectar_mariadb()
+    if connection is None:
+        raise ConnectionError("No fue posible conectar con MariaDB")
     cursor = connection.cursor(dictionary=True)
 
     try:
+        asegurar_esquema_credito(cursor)
+        connection.commit()
         connection.start_transaction()
 
         cursor.execute(
@@ -91,7 +99,7 @@ def registrar_venta(
 
         cursor.execute(
             """
-            SELECT id_metodo_pago
+            SELECT id_metodo_pago, nombre
             FROM metodo_pago
             WHERE id_metodo_pago = %s
               AND activo = 1
@@ -99,8 +107,10 @@ def registrar_venta(
             """,
             (id_metodo_pago,),
         )
-        if cursor.fetchone() is None:
+        payment_method = cursor.fetchone()
+        if payment_method is None:
             raise ValueError("El método de pago no existe o está inactivo")
+        es_credito_girasol = payment_method["nombre"].strip().lower().replace("é", "e") == "credito girasol"
 
         if rut_cliente is not None:
             try:
@@ -113,6 +123,7 @@ def registrar_venta(
                 SELECT rut_cliente
                 FROM cliente
                 WHERE rut_cliente = %s
+                FOR UPDATE
                 """,
                 (rut_cliente,),
             )
@@ -121,6 +132,8 @@ def registrar_venta(
 
         productos: list[dict[str, Any]] = []
         subtotal = Decimal("0")
+        costo_total = Decimal("0")
+        costo_configurado = True
 
         for item in items_normalizados:
             cursor.execute(
@@ -129,7 +142,8 @@ def registrar_venta(
                     vp.id_variante,
                     vp.stock_actual,
                     p.nombre,
-                    p.precio_venta
+                    p.precio_venta,
+                    p.costo_adquisicion
                 FROM variante_producto vp
                 INNER JOIN producto p
                     ON p.id_producto = vp.id_producto
@@ -157,6 +171,10 @@ def registrar_venta(
             precio_unitario = _decimal(producto["precio_venta"])
             subtotal_linea = _decimal(precio_unitario * cantidad)
             subtotal += subtotal_linea
+            if producto["costo_adquisicion"] is None:
+                costo_configurado = False
+            else:
+                costo_total += _decimal(producto["costo_adquisicion"]) * cantidad
 
             productos.append(
                 {
@@ -169,6 +187,11 @@ def registrar_venta(
 
         subtotal = _decimal(subtotal)
         total = _decimal(subtotal * (Decimal("1") - descuento / Decimal("100")))
+        if es_credito_girasol:
+            if rut_cliente is None:
+                raise ValueError("Crédito Girasol requiere una clienta")
+            if not costo_configurado:
+                raise ValueError("Configura el costo de adquisición de todos los productos antes de vender a crédito")
 
         cursor.execute(
             """
@@ -178,9 +201,10 @@ def registrar_venta(
                 id_metodo_pago,
                 subtotal,
                 descuento,
-                total
+                total,
+                pie_credito
             )
-            VALUES (%s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, 0)
             """,
             (
                 id_usuario,
@@ -192,6 +216,19 @@ def registrar_venta(
             ),
         )
         id_venta = cursor.lastrowid
+        credito_result = None
+        if es_credito_girasol:
+            credito_result = registrar_credito_venta(
+                cursor,
+                id_venta=int(id_venta),
+                rut_cliente=rut_cliente,
+                total=total,
+                costo_total=costo_total,
+                pie=pie_credito,
+                cantidad_cuotas=cuotas_credito,
+                fecha_venta=datetime.now(),
+            )
+            cursor.execute("UPDATE venta SET pie_credito = %s WHERE id_venta = %s", (credito_result["pie"], id_venta))
 
         for producto in productos:
             cursor.execute(
@@ -254,13 +291,16 @@ def registrar_venta(
 
         connection.commit()
 
-        return {
+        result = {
             "id_venta": int(id_venta),
             "subtotal": subtotal,
             "descuento": descuento,
             "total": total,
             "items": productos,
         }
+        if credito_result is not None:
+            result["credito"] = credito_result
+        return result
 
     except Exception:
         connection.rollback()

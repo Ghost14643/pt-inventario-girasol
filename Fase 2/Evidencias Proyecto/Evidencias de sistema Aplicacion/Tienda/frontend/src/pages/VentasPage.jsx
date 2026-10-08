@@ -35,6 +35,11 @@ export function VentasPage({ session, ...props }) {
   const [clientResults, setClientResults] = React.useState([]);
   const [selectedClient, setSelectedClient] = React.useState(null);
   const [manualClientRut, setManualClientRut] = React.useState("");
+  const [creditTerms, setCreditTerms] = React.useState({ pie: "", cuotas: "3" });
+  const [creditDownMethod, setCreditDownMethod] = React.useState("debito");
+  const [creditEstimate, setCreditEstimate] = React.useState(null);
+  const [creditEstimateLoading, setCreditEstimateLoading] = React.useState(false);
+  const [creditEstimateError, setCreditEstimateError] = React.useState("");
   const [searching, setSearching] = React.useState(false);
   const [cardPayment, setCardPayment] = React.useState({
     ultimos_4_digitos: "",
@@ -65,10 +70,67 @@ export function VentasPage({ session, ...props }) {
       clearTimeout(timer);
     };
   }, [clientSearch, method]);
+  const creditItemsKey = items
+    .map((item) => `${item.barcode}:${item.cantidad}`)
+    .join("|");
+  React.useEffect(() => {
+    if (method !== "credito_girasol" || !selectedClient || !items.length) {
+      setCreditEstimate(null);
+      setCreditEstimateLoading(false);
+      setCreditEstimateError("");
+      if (method === "credito_girasol" && !items.length) {
+        setCreditTerms((current) => ({ ...current, pie: "" }));
+      }
+      return;
+    }
+
+    let active = true;
+    setCreditEstimate(null);
+    setCreditEstimateLoading(true);
+    setCreditEstimateError("");
+    setCreditTerms((current) => ({ ...current, pie: "" }));
+    salesService
+      .estimateCredit({
+        cliente_rut: selectedClient.rut,
+        productos: items.map((item) => ({
+          sku: item.barcode,
+          cantidad: item.cantidad,
+        })),
+      })
+      .then((estimate) => {
+        if (!active) return;
+        setCreditEstimate(estimate);
+        setCreditTerms((current) => ({
+          ...current,
+          pie: String(estimate.pie_requerido),
+        }));
+        setSelectedClient((current) =>
+          current?.rut === selectedClient.rut
+            ? { ...current, ...estimate }
+            : current,
+        );
+      })
+      .catch((error) => {
+        if (active) {
+          setCreditEstimateError(
+            error?.response?.data?.detail ||
+              "No fue posible calcular el pie requerido.",
+          );
+        }
+      })
+      .finally(() => {
+        if (active) setCreditEstimateLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [method, selectedClient?.rut, creditItemsKey]);
   async function add() {
-    if (!barcode) return;
+    const sku = barcode.trim();
+    if (!sku) return;
     try {
-      const p = await inventoryService.bySku(barcode);
+      const p = await inventoryService.bySku(sku);
       setItems((current) => {
         const index = current.findIndex((x) => x.barcode === p.barcode);
         return index < 0
@@ -94,10 +156,34 @@ export function VentasPage({ session, ...props }) {
     (sum, item) => sum + item.precio * item.cantidad,
     0,
   );
-  const creditInvalid = method === "credito_girasol" && !selectedClient;
+  const minimumCreditDown = selectedClient
+    ? Number(
+        creditEstimate?.pie_requerido ??
+          Math.ceil((total * Number(selectedClient.minimo_pie_porcentaje || 40)) / 100),
+      )
+    : 0;
+  const creditDown = creditTerms.pie === "" ? minimumCreditDown : Number(creditTerms.pie);
+  const creditInstallments = Number(creditTerms.cuotas);
+  const creditInvalid = method === "credito_girasol" && (
+    !selectedClient ||
+    selectedClient.bloqueada ||
+    creditEstimateLoading ||
+    !creditEstimate ||
+    Boolean(creditEstimateError) ||
+    !creditEstimate.puede_financiar ||
+    creditDown < minimumCreditDown ||
+    creditDown >= total ||
+    total - creditDown > Number(selectedClient.credito_disponible || 0) ||
+    !Number.isInteger(creditInstallments) ||
+    creditInstallments < 1 ||
+    creditInstallments > Number(selectedClient.maximo_cuotas || 3)
+  );
   const isCardPayment = method === "debito" || method === "credito";
+  const creditDownCardPayment =
+    method === "credito_girasol" && creditDownMethod === "debito";
+  const showCardPaymentFields = isCardPayment || creditDownCardPayment;
   async function sell() {
-    if (isCardPayment) {
+    if (showCardPaymentFields) {
       if (!/^\d{4}$/.test(cardPayment.ultimos_4_digitos)) {
         setMsg("Ingresa los 4 últimos dígitos de la tarjeta.");
         return;
@@ -120,7 +206,9 @@ export function VentasPage({ session, ...props }) {
       }
 
       const cuotas =
-        method === "debito" ? 1 : Number(cardPayment.cantidad_cuotas);
+        method === "debito" || creditDownCardPayment
+          ? 1
+          : Number(cardPayment.cantidad_cuotas);
       if (!Number.isInteger(cuotas) || cuotas < 1) {
         setMsg(
           "La cantidad de cuotas debe ser un número entero mayor que cero.",
@@ -161,11 +249,30 @@ export function VentasPage({ session, ...props }) {
           metodo_pago: method,
           rut_empleado: session.rut || "sistema",
           cliente_rut: resolvedClient.rut,
+          pie_credito: creditTerms.pie === "" ? null : creditDown,
+          cuotas_credito: creditInstallments,
+          metodo_pago_pie: creditDownMethod,
+          ...(creditDownCardPayment && {
+            ultimos_4_digitos: cardPayment.ultimos_4_digitos,
+            codigo_autorizacion: cardPayment.codigo_autorizacion.trim(),
+            numero_comprobante: cardPayment.numero_comprobante.trim(),
+            cantidad_cuotas: 1,
+            marca_tarjeta: cardPayment.marca_tarjeta.trim() || null,
+          }),
         });
         setItems([]);
         setSelectedClient(null);
+        setCreditTerms({ pie: "", cuotas: "3" });
+        setCreditDownMethod("debito");
         setClientSearch("");
         setManualClientRut("");
+        setCardPayment({
+          ultimos_4_digitos: "",
+          codigo_autorizacion: "",
+          numero_comprobante: "",
+          cantidad_cuotas: "1",
+          marca_tarjeta: "",
+        });
         setMsg(
           method === "credito_girasol"
             ? `Venta a Crédito Girasol registrada. Disponible restante: ${money(result.sale.credito.disponible)}.`
@@ -335,12 +442,152 @@ export function VentasPage({ session, ...props }) {
               </button>
             ))}
           </div>
-          {isCardPayment && (
+          {method === "credito_girasol" && (
+            <div className="girasol-credit">
+              <div className="girasol-credit__title">
+                <HeartHandshake />
+                <div>
+                  <strong>Clienta para Crédito Girasol</strong>
+                  <small>Busca por nombre o RUT</small>
+                </div>
+              </div>
+              {selectedClient ? (
+                <>
+                  <div className="selected-credit-client">
+                    <span>
+                      <UserRound />
+                    </span>
+                    <div>
+                      <strong>{selectedClient.nombre}</strong>
+                      <small>{selectedClient.rut}</small>
+                      <p>
+                        Disponible{" "}
+                        <b>{money(selectedClient.credito_disponible)}</b> de{" "}
+                        {money(selectedClient.tope_credito)}
+                      </p>
+                      <small>
+                        Nivel {selectedClient.nivel_credito} · pie mínimo {selectedClient.minimo_pie_porcentaje}% · hasta {selectedClient.maximo_cuotas} cuotas
+                      </small>
+                    </div>
+                    <button
+                      onClick={() => setSelectedClient(null)}
+                      aria-label="Quitar clienta"
+                    >
+                      <X />
+                    </button>
+                  </div>
+                  <div className="credit-terms">
+                    <label>
+                      Pie inicial sugerido · {creditEstimateLoading ? "Calculando…" : money(minimumCreditDown)}
+                      <input
+                        type="number"
+                        min={minimumCreditDown}
+                        max={Math.max(total - 1, minimumCreditDown)}
+                        step="1"
+                        disabled={!creditEstimate || creditEstimateLoading || Boolean(creditEstimateError)}
+                        value={creditTerms.pie === "" ? minimumCreditDown : creditTerms.pie}
+                        onChange={(event) => setCreditTerms((terms) => ({ ...terms, pie: event.target.value }))}
+                      />
+                    </label>
+                    <label>
+                      Cuotas mensuales
+                      <select
+                        value={creditTerms.cuotas}
+                        onChange={(event) => setCreditTerms((terms) => ({ ...terms, cuotas: event.target.value }))}
+                      >
+                        {Array.from({ length: Number(selectedClient.maximo_cuotas || 3) }, (_, index) => index + 1).map((count) => (
+                          <option value={count} key={count}>{count}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <div className="credit-down-payment">
+                      <strong>¿Cómo pagará el pie?</strong>
+                      <div>
+                        <button
+                          type="button"
+                          className={creditDownMethod === "efectivo" ? "active" : ""}
+                          aria-pressed={creditDownMethod === "efectivo"}
+                          onClick={() => setCreditDownMethod("efectivo")}
+                        >
+                          <Banknote />
+                          Efectivo
+                        </button>
+                        <button
+                          type="button"
+                          className={creditDownMethod === "debito" ? "active" : ""}
+                          aria-pressed={creditDownMethod === "debito"}
+                          onClick={() => setCreditDownMethod("debito")}
+                        >
+                          <WalletCards />
+                          Débito
+                        </button>
+                      </div>
+                      {creditDownCardPayment && (
+                        <small>
+                          Completa los datos de la tarjeta que aparecen abajo;
+                          el pie se registrará como débito en el arqueo.
+                        </small>
+                      )}
+                    </div>
+                    <small className="credit-estimate-note">
+                      {creditEstimateLoading
+                        ? "Calculando pie según costo, perfil y cupo disponible…"
+                        : creditEstimate
+                          ? `Saldo financiado estimado: ${money(Math.max(total - creditDown, 0) / Math.max(creditInstallments, 1))} por cuota.`
+                          : "El pie se calculará al agregar productos."}
+                    </small>
+                    {creditEstimateError && <small className="credit-warning">{creditEstimateError}</small>}
+                    {selectedClient.bloqueada && <small className="credit-warning">Bloqueada por {selectedClient.cuotas_vencidas} cuota(s) vencida(s).</small>}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="credit-client-search">
+                    <Search />
+                    <input
+                      value={clientSearch}
+                      onChange={(e) => setClientSearch(e.target.value)}
+                      placeholder="Nombre o RUT de la clienta"
+                    />
+                  </div>
+                  {searching && (
+                    <small className="credit-search-status">Buscando…</small>
+                  )}
+                  <div className="credit-client-results">
+                    {clientResults.map((client) => (
+                      <button
+                        key={client.rut}
+                        onClick={() => {
+                          setSelectedClient(client);
+                          setClientResults([]);
+                        }}
+                      >
+                        <span>
+                          <strong>{client.nombre}</strong>
+                          <small>{client.rut}</small>
+                          <small>{client.nivel_credito} · pie mínimo {client.minimo_pie_porcentaje}% · máximo {client.maximo_cuotas} cuotas</small>
+                        </span>
+                        <span>
+                          <small>Disponible</small>
+                          <b>{money(client.credito_disponible)}</b>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+          {showCardPaymentFields && (
             <div className="girasol-credit card-payment">
               <div className="girasol-credit__title">
                 <CreditCard />
                 <div>
-                  <strong>Datos del pago con tarjeta</strong>
+                  <strong>
+                    {creditDownCardPayment
+                      ? "Datos del débito del pie"
+                      : "Datos del pago con tarjeta"}
+                  </strong>
                   <small>Completa los datos del comprobante</small>
                 </div>
               </div>
@@ -401,9 +648,11 @@ export function VentasPage({ session, ...props }) {
                     type="number"
                     min="1"
                     step="1"
-                    disabled={method === "debito"}
+                    disabled={method === "debito" || creditDownCardPayment}
                     value={
-                      method === "debito" ? 1 : cardPayment.cantidad_cuotas
+                      method === "debito" || creditDownCardPayment
+                        ? 1
+                        : cardPayment.cantidad_cuotas
                     }
                     onChange={(event) =>
                       setCardPayment((current) => ({
@@ -432,76 +681,14 @@ export function VentasPage({ session, ...props }) {
               </div>
             </div>
           )}
-          {method === "credito_girasol" && (
-            <div className="girasol-credit">
-              <div className="girasol-credit__title">
-                <HeartHandshake />
-                <div>
-                  <strong>Clienta para Crédito Girasol</strong>
-                  <small>Busca por nombre o RUT</small>
-                </div>
-              </div>
-              {selectedClient ? (
-                <div className="selected-credit-client">
-                  <span>
-                    <UserRound />
-                  </span>
-                  <div>
-                    <strong>{selectedClient.nombre}</strong>
-                    <small>{selectedClient.rut}</small>
-                    <p>
-                      Disponible{" "}
-                      <b>{money(selectedClient.credito_disponible)}</b> de{" "}
-                      {money(selectedClient.tope_credito)}
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => setSelectedClient(null)}
-                    aria-label="Quitar clienta"
-                  >
-                    <X />
-                  </button>
-                </div>
-              ) : (
-                <>
-                  <div className="credit-client-search">
-                    <Search />
-                    <input
-                      value={clientSearch}
-                      onChange={(e) => setClientSearch(e.target.value)}
-                      placeholder="Nombre o RUT de la clienta"
-                    />
-                  </div>
-                  {searching && (
-                    <small className="credit-search-status">Buscando…</small>
-                  )}
-                  <div className="credit-client-results">
-                    {clientResults.map((client) => (
-                      <button
-                        key={client.rut}
-                        onClick={() => {
-                          setSelectedClient(client);
-                          setClientResults([]);
-                        }}
-                      >
-                        <span>
-                          <strong>{client.nombre}</strong>
-                          <small>{client.rut}</small>
-                        </span>
-                        <span>
-                          <small>Disponible</small>
-                          <b>{money(client.credito_disponible)}</b>
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                </>
-              )}
-            </div>
-          )}{" "}
-          {creditInvalid && selectedClient && (
+          {items.length > 0 && creditInvalid && selectedClient && !creditEstimateError && creditEstimate?.puede_financiar === false && !selectedClient.bloqueada && (
             <p className="credit-warning">
-              El total supera el crédito disponible de la clienta.
+              El pie requerido alcanza el total de la compra o el cupo no permite financiar un saldo.
+            </p>
+          )}
+          {items.length > 0 && creditInvalid && selectedClient && !creditEstimateError && creditEstimate?.puede_financiar !== false && (
+            <p className="credit-warning">
+              Espera el cálculo del pie o revisa el monto y las cuotas elegidas.
             </p>
           )}
           <button
