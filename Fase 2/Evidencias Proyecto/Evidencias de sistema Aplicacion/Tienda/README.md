@@ -309,6 +309,24 @@ El frontend estará disponible en modo desarrollo con hot-reload.
 - **Backend**: `http://127.0.0.1:8000/` (endpoints REST)
 - **API Docs**: `http://127.0.0.1:8000/docs` (Swagger interactivo)
 
+### Aplicación completa en Docker (desarrollo)
+
+Con Docker Desktop iniciado y las variables requeridas configuradas en `.env`, levanta la base y la API:
+
+```powershell
+docker compose up -d --build
+docker compose ps
+docker compose logs -f dev
+```
+
+Los servicios `frontend` y `dev` montan el código del workspace y recargan sus cambios al guardar. La interfaz queda en `http://127.0.0.1:5174` y la API en `http://127.0.0.1:8765`; ambos servicios usan la MariaDB del mismo Compose. Para comprobar que el backend del contenedor compila:
+
+```powershell
+docker compose exec dev python -m py_compile server.py backend/logica/ventas.py backend/logica/arqueo.py
+```
+
+`docker compose down` detiene los servicios sin borrar la base persistida. No uses `docker compose down -v` si quieres conservarla.
+
 ---
 
 ## Empaquetado y Construcción (Production Build)

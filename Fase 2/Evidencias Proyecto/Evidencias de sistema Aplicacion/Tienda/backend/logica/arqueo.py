@@ -5,6 +5,7 @@ from datetime import date, datetime, timedelta
 from typing import Any
 
 from backend.db.conexion import conectar_db, conectar_mydb
+from backend.logica.credito import asegurar_esquema_credito
 
 _NEW_COLUMNS = {
     "apertura_at": "TEXT", "cierre_at": "TEXT", "ventas_cantidad": "INTEGER",
@@ -109,17 +110,29 @@ def _ventas_del_turno(fecha: str, apertura_at: str | None) -> dict[str, Any]:
         raise ConnectionError("No fue posible conectar con MariaDB para recopilar las ventas")
     cursor = conn.cursor(dictionary=True)
     try:
+        asegurar_esquema_credito(cursor)
+        conn.commit()
         cursor.execute("SHOW TABLES LIKE 'venta'")
         usa_tabla_nueva = cursor.fetchone() is not None
 
         if usa_tabla_nueva:
             cursor.execute(
-                """SELECT LOWER(mp.nombre) metodo, COUNT(*) cantidad, COALESCE(SUM(v.total),0) total
+                """SELECT LOWER(mp.nombre) metodo, COUNT(*) cantidad,
+                           COALESCE(SUM(CASE WHEN LOWER(mp.nombre) = 'crédito girasol'
+                               THEN v.total - v.pie_credito ELSE v.total END),0) total
                     FROM venta v
                     JOIN metodo_pago mp ON mp.id_metodo_pago = v.id_metodo_pago
                     WHERE v.fecha >= %s AND v.fecha < %s
-                    GROUP BY LOWER(mp.nombre)""",
-                (inicio, fin),
+                                        GROUP BY LOWER(mp.nombre)
+                                        UNION ALL
+                                        SELECT COALESCE(v.metodo_pago_pie, 'efectivo') metodo,
+                                               0 cantidad, COALESCE(SUM(v.pie_credito),0) total
+                                        FROM venta v
+                                        JOIN metodo_pago mp ON mp.id_metodo_pago = v.id_metodo_pago
+                                        WHERE v.fecha >= %s AND v.fecha < %s
+                                            AND LOWER(mp.nombre) = 'crédito girasol'
+                                        GROUP BY COALESCE(v.metodo_pago_pie, 'efectivo')""",
+                                (inicio, fin, inicio, fin),
             )
         else:
             cursor.execute(

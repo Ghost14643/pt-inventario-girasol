@@ -39,6 +39,7 @@ CREATE TABLE producto (
   nombre        VARCHAR(100)   NOT NULL,
   descripcion   TEXT           NULL,
   precio_venta  DECIMAL(10,2)  NOT NULL,
+  costo_adquisicion DECIMAL(10,2) NULL,
   PRIMARY KEY (id_producto),
   UNIQUE KEY uq_producto_codigo_base (codigo_base),
   CONSTRAINT fk_producto_marca FOREIGN KEY (id_marca) REFERENCES marca (id_marca),
@@ -92,6 +93,8 @@ CREATE TABLE venta (
   subtotal        DECIMAL(10,2)  NOT NULL,
   descuento       DECIMAL(10,2)  NOT NULL DEFAULT 0,       -- porcentaje
   total           DECIMAL(10,2)  NOT NULL,
+  pie_credito     DECIMAL(10,2)  NOT NULL DEFAULT 0,
+  metodo_pago_pie VARCHAR(20)    NOT NULL DEFAULT 'efectivo',
   PRIMARY KEY (id_venta),
   KEY idx_venta_fecha (fecha),
   CONSTRAINT fk_venta_usuario     FOREIGN KEY (id_usuario)     REFERENCES usuario (id_usuario),
@@ -148,6 +151,31 @@ CREATE TABLE cuota_credito (
   KEY idx_cuota_estado_venc (fecha_pago, fecha_vencimiento),
   CONSTRAINT fk_cuota_credito FOREIGN KEY (id_credito) REFERENCES credito (id_credito),
   CONSTRAINT ck_cuota_valores CHECK (numero_cuota > 0 AND monto_cuota > 0)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE abono_credito (
+  id_abono   INT            NOT NULL AUTO_INCREMENT,
+  id_credito INT            NOT NULL,
+  id_usuario INT            NOT NULL,
+  monto      DECIMAL(10,2)  NOT NULL,
+  fecha      DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id_abono),
+  KEY idx_abono_credito_fecha (id_credito, fecha),
+  CONSTRAINT fk_abono_credito_credito FOREIGN KEY (id_credito) REFERENCES credito (id_credito),
+  CONSTRAINT fk_abono_credito_usuario FOREIGN KEY (id_usuario) REFERENCES usuario (id_usuario),
+  CONSTRAINT ck_abono_credito_monto CHECK (monto > 0)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE detalle_abono_credito (
+  id_detalle_abono  INT            NOT NULL AUTO_INCREMENT,
+  id_abono          INT            NOT NULL,
+  id_cuota_credito  INT            NOT NULL,
+  monto             DECIMAL(10,2)  NOT NULL,
+  PRIMARY KEY (id_detalle_abono),
+  KEY idx_detalle_abono_cuota (id_cuota_credito),
+  CONSTRAINT fk_detalle_abono_abono FOREIGN KEY (id_abono) REFERENCES abono_credito (id_abono),
+  CONSTRAINT fk_detalle_abono_cuota FOREIGN KEY (id_cuota_credito) REFERENCES cuota_credito (id_cuota_credito),
+  CONSTRAINT ck_detalle_abono_monto CHECK (monto > 0)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ========== Inventario ==========

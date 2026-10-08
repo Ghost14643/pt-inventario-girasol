@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Any
 
 from backend.db.conexion import conectar_mydb
+from backend.logica.credito import asegurar_esquema_credito
 
 STOCK_BAJO_MAXIMO = 5
 
@@ -133,6 +134,10 @@ def obtener_producto_por_codigo(codigo_barra: str) -> dict[str, Any] | None:
 
 
 def obtener_producto_por_sku(sku: str) -> dict[str, Any] | None:
+    sku = str(sku or "").strip()
+    if not sku:
+        return None
+
     conn = _connection()
     cursor = conn.cursor(dictionary=True)
     try:
@@ -215,6 +220,35 @@ def crear_prenda(*, nombre: str, marca: str | None, precio: int, stock: int,
             "stock": int(stock),
             "barcode": barcode,
         }
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cursor.close()
+        conn.close()
+
+
+def actualizar_costo_adquisicion(codigo_base: str, costo: int | float) -> dict[str, Any]:
+    codigo_base = codigo_base.strip()
+    if not codigo_base or costo < 0:
+        raise ValueError("El código y un costo no negativo son obligatorios")
+    conn = conectar_mydb()
+    if conn is None:
+        raise ConnectionError("No fue posible conectar con MariaDB")
+    cursor = conn.cursor(dictionary=True)
+    try:
+        asegurar_esquema_credito(cursor)
+        conn.commit()
+        cursor.execute(
+            "UPDATE producto SET costo_adquisicion = %s WHERE codigo_base = %s",
+            (costo, codigo_base),
+        )
+        if cursor.rowcount == 0:
+            cursor.execute("SELECT codigo_base FROM producto WHERE codigo_base = %s", (codigo_base,))
+            if cursor.fetchone() is None:
+                raise LookupError("Producto no encontrado")
+        conn.commit()
+        return {"codigo_base": codigo_base, "costo_adquisicion": float(costo)}
     except Exception:
         conn.rollback()
         raise

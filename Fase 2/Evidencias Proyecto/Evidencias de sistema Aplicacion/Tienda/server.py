@@ -25,7 +25,7 @@ ROOT_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from backend.logica import arqueo, clientes, configuracion, facturas, inventario, marcas, user, ventas  # noqa: E402
+from backend.logica import arqueo, clientes, configuracion, credito, facturas, inventario, marcas, ventas  # noqa: E402
 
 from backend.repositorios.usuarios_mariadb import (
     autenticar_usuario,
@@ -47,7 +47,15 @@ REACT_DEV_ORIGIN = os.getenv("REACT_DEV_ORIGIN", "http://localhost:5173")
 app = FastAPI(title="Tienda Local API", version="0.1.0")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[TAURI_DEV_ORIGIN, REACT_DEV_ORIGIN, "tauri://localhost", "http://tauri.localhost", "http://127.0.0.1:5173"],
+    allow_origins=[
+        TAURI_DEV_ORIGIN,
+        REACT_DEV_ORIGIN,
+        "tauri://localhost",
+        "http://tauri.localhost",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:5174",
+        "http://localhost:5174",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -114,12 +122,30 @@ class SaleRequest(BaseModel):
     metodo_pago: Literal["efectivo", "debito", "credito", "credito_girasol", "transferencia", "otro"] = "efectivo"
     rut_empleado: str
     cliente_rut: str | None = None
+    metodo_pago_pie: Literal["efectivo", "debito"] = "efectivo"
     ultimos_4_digitos: str | None = Field(default=None, pattern=r"^[0-9]{4}$")
     codigo_autorizacion: str | None = Field(default=None, max_length=20)
     numero_comprobante: str | None = Field(default=None, max_length=30)
     cantidad_cuotas: int = Field(default=1, ge=1)
+    pie_credito: Decimal | None = Field(default=None, ge=0)
+    cuotas_credito: int = Field(default=3, ge=1, le=8)
     marca_tarjeta: str | None = Field(default=None, max_length=30)
     registrar_arqueo: bool = False
+
+
+class CreditPaymentRequest(BaseModel):
+    monto: Decimal = Field(gt=0)
+
+
+class CreditEstimateItem(BaseModel):
+    sku: str
+    cantidad: int = Field(gt=0)
+
+
+class CreditEstimateRequest(BaseModel):
+    cliente_rut: str
+    productos: list[CreditEstimateItem] = Field(min_length=1)
+
 
 class MariaDbSaleItem(BaseModel):
     id_variante: int = Field(gt=0)
@@ -132,6 +158,8 @@ class MariaDbSaleRequest(BaseModel):
     items: list[MariaDbSaleItem] = Field(min_length=1)
     descuento: Decimal = Field(default=Decimal("0"), ge=0, le=100)
     rut_cliente: int | None = None
+    pie_credito: Decimal | None = Field(default=None, ge=0)
+    cuotas_credito: int = Field(default=3, ge=1, le=8)
 
 
 class CashOpenRequest(BaseModel):
@@ -447,6 +475,56 @@ def get_client_credit(rut: str) -> list[dict[str, Any]]:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
+@app.get("/clients/{rut}/credit/{id_credito}")
+def get_client_credit_detail(rut: str, id_credito: int) -> dict[str, Any]:
+    try:
+        return clientes.obtener_detalle_credito(rut, id_credito)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (ValueError, ConnectionError) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.post("/credits/estimate")
+def estimate_credit(data: CreditEstimateRequest) -> dict[str, Any]:
+    try:
+        return ventas.estimar_pie_credito(
+            [item.model_dump() for item in data.productos], data.cliente_rut
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ConnectionError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.post("/credits/{id_credito}/payments")
+def add_credit_payment(
+    id_credito: int,
+    data: CreditPaymentRequest,
+    session: dict[str, Any] = Depends(require_session),
+) -> dict[str, Any]:
+    try:
+        return credito.registrar_abono(
+            id_credito,
+            monto=data.monto,
+            id_usuario=int(session["id_usuario"]),
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ConnectionError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.get("/credit/reports")
+def credit_reports(_: dict[str, Any] = Depends(require_admin)) -> dict[str, float | int]:
+    try:
+        return credito.indicadores_credito()
+    except ConnectionError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
 @app.post("/sales")
 def create_sale(data: SaleRequest) -> dict[str, Any]:
     try:
@@ -457,11 +535,14 @@ def create_sale(data: SaleRequest) -> dict[str, Any]:
             metodo_pago=data.metodo_pago,
             rut_empleado=data.rut_empleado,
             cliente_rut=data.cliente_rut,
+            metodo_pago_pie=data.metodo_pago_pie,
             ultimos_4_digitos=data.ultimos_4_digitos,
             codigo_autorizacion=data.codigo_autorizacion,
             numero_comprobante=data.numero_comprobante,
             cantidad_cuotas=data.cantidad_cuotas,
             marca_tarjeta=data.marca_tarjeta,
+            pie_credito=data.pie_credito,
+            cuotas_credito=data.cuotas_credito,
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -492,6 +573,8 @@ def create_sale_mariadb(
             ],
             descuento=data.descuento,
             rut_cliente=data.rut_cliente,
+            pie_credito=data.pie_credito,
+            cuotas_credito=data.cuotas_credito,
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
