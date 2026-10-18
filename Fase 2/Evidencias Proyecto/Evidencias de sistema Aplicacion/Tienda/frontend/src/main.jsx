@@ -13,14 +13,21 @@ import { ConfiguracionPage } from './pages/ConfiguracionPage.jsx';
 import { authService, cashService } from './services/api.js';
 
 const localDate = () => { const d=new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; };
+const routePages = { '/': 'menu', '/inventario': 'inventario', '/ventas': 'ventas', '/configuracion': 'configuracion', '/clientes': 'clientes', '/arqueo': 'arqueo', '/ingreso-mercaderia': 'ingreso-mercaderia' };
 
 function App() {
-  const [page, setPage] = React.useState('menu');
+  const [page, setPage] = React.useState(() => routePages[window.location.pathname] ?? 'menu');
   const [dark, setDark] = React.useState(false);
   const [session, setSession] = React.useState(() => { try { return JSON.parse(localStorage.getItem('girasol:session')); } catch { return null; } });
   const [logoutPrompt, setLogoutPrompt] = React.useState(false);
   const [cashPrompt, setCashPrompt] = React.useState(null);
   const [openingCash, setOpeningCash] = React.useState(false);
+
+  React.useEffect(() => {
+    const syncPage = () => setPage(routePages[window.location.pathname] ?? 'menu');
+    window.addEventListener('popstate', syncPage);
+    return () => window.removeEventListener('popstate', syncPage);
+  }, []);
 
   const finishLogout = React.useCallback(async () => { try { await authService.logout(); } catch { /* el cierre local debe continuar aunque el API no esté disponible */ } localStorage.removeItem('girasol:session'); setSession(null); setLogoutPrompt(false); setCashPrompt(null); }, []);
   React.useEffect(() => { const logout = () => setLogoutPrompt(true); window.addEventListener('girasol:logout', logout); return () => window.removeEventListener('girasol:logout', logout); }, []);
