@@ -1,7 +1,6 @@
 import axios from "axios";
 
-export const API_BASE_URL =
-  "http://34.31.31.126:8765";
+export const API_BASE_URL = "http://34.31.31.126:8765";
 
 export const api = axios.create({ baseURL: API_BASE_URL, timeout: 10000 });
 api.interceptors.request.use((config) => {
@@ -33,6 +32,14 @@ export const inventoryService = {
   bySku: (sku) =>
     api.get(`/inventory/sku/${encodeURIComponent(sku)}`).then((r) => r.data),
   create: (payload) => api.post("/inventory", payload).then((r) => r.data),
+  lookupForReceiving: (barcode) =>
+    api
+      .get(`/inventory/barcode/${encodeURIComponent(barcode)}`)
+      .then((response) => response.data),
+  confirmReceiving: (items) =>
+    api
+      .post("/inventory/receiving", { items })
+      .then((response) => response.data),
 };
 
 export const salesService = {

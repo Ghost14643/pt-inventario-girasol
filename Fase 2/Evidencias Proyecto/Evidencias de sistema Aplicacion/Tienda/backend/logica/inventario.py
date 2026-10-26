@@ -97,6 +97,10 @@ def obtener_categorias() -> list[dict[str, Any]]:
 
 
 def obtener_producto_por_codigo(codigo_barra: str) -> dict[str, Any] | None:
+    codigo_barra = str(codigo_barra or "").strip()
+    if not codigo_barra:
+        return None
+
     conn = _connection()
     cursor = conn.cursor(dictionary=True)
     try:
@@ -104,10 +108,13 @@ def obtener_producto_por_codigo(codigo_barra: str) -> dict[str, Any] | None:
             """
             SELECT
                 vp.id_variante AS id,
+                vp.id_producto AS id_producto,
                 TRIM(p.nombre) AS nombre,
                 p.precio_venta AS precio,
                 vp.stock_actual AS stock,
-                TRIM(vp.sku) AS barcode,
+                TRIM(vp.sku) AS sku,
+                vp.talla AS talla,
+                vp.color AS color,
                 TRIM(m.nombre) AS marca
             FROM variante_producto vp
             JOIN producto p ON p.id_producto = vp.id_producto
@@ -120,14 +127,239 @@ def obtener_producto_por_codigo(codigo_barra: str) -> dict[str, Any] | None:
         row = cursor.fetchone()
         if row is None:
             return None
+
         return {
-            "id": row["id"],
+            "id": int(row["id"]),
+            "id_producto": int(row["id_producto"]),
             "nombre": row["nombre"],
             "precio": float(row["precio"] or 0),
             "stock": int(row["stock"] or 0),
-            "barcode": row["barcode"],
-            "marca": row["marca"],
+            "sku": row["sku"] or "",
+            "barcode": row["sku"] or "",
+            "talla": row["talla"] or "",
+            "color": row["color"] or "",
+            "marca": row["marca"] or "",
         }
+    finally:
+        cursor.close()
+        conn.close()
+
+def registrar_ingreso_mixto(
+    items: list[dict[str, Any]],
+    id_usuario: int,
+) -> dict[str, Any]:
+    if not items:
+        raise ValueError("Agrega al menos un producto al ingreso")
+    if len(items) > 100:
+        raise ValueError("El ingreso no puede superar las 100 líneas")
+
+    conn = _connection()
+    cursor = conn.cursor(dictionary=True)
+
+    try:
+        resultados: list[dict[str, Any]] = []
+        variantes_en_lote: set[int] = set()
+        codigos_nuevos_en_lote: set[str] = set()
+
+        for index, item in enumerate(items, start=1):
+            tipo = item.get("tipo")
+            cantidad = item.get("cantidad")
+
+            if isinstance(cantidad, bool) or not isinstance(cantidad, int):
+                raise ValueError(f"Línea {index}: la cantidad debe ser un entero")
+            if cantidad < 1 or cantidad > 10_000:
+                raise ValueError(f"Línea {index}: la cantidad debe estar entre 1 y 10.000")
+
+            referencia = str(item.get("referencia") or "").strip()
+            if len(referencia) > 100:
+                raise ValueError(f"Línea {index}: la referencia supera los 100 caracteres")
+
+            if tipo == "existente":
+                try:
+                    id_variante = int(item["id_variante"])
+                except (KeyError, TypeError, ValueError) as exc:
+                    raise ValueError(f"Línea {index}: falta una variante válida") from exc
+
+                if id_variante in variantes_en_lote:
+                    raise ValueError(
+                        f"Línea {index}: la variante está repetida en el ingreso"
+                    )
+                variantes_en_lote.add(id_variante)
+
+                cursor.execute(
+                    """
+                    UPDATE variante_producto
+                    SET stock_actual = stock_actual + %s
+                    WHERE id_variante = %s
+                    """,
+                    (cantidad, id_variante),
+                )
+                if cursor.rowcount != 1:
+                    raise LookupError(
+                        f"Línea {index}: la variante {id_variante} no existe"
+                    )
+
+                cursor.execute(
+                    """
+                    INSERT INTO movimiento_stock (
+                        id_variante, tipo, cantidad, fecha, referencia, id_usuario
+                    )
+                    VALUES (%s, 'Entrada', %s, NOW(), %s, %s)
+                    """,
+                    (id_variante, cantidad, referencia or None, id_usuario),
+                )
+
+                cursor.execute(
+                    """
+                    SELECT stock_actual
+                    FROM variante_producto
+                    WHERE id_variante = %s
+                    """,
+                    (id_variante,),
+                )
+                stock_actualizado = int(cursor.fetchone()["stock_actual"])
+
+                resultados.append(
+                    {
+                        "tipo": "existente",
+                        "id_variante": id_variante,
+                        "stock_actual": stock_actualizado,
+                    }
+                )
+                continue
+
+            if tipo != "nueva":
+                raise ValueError(f"Línea {index}: tipo de ingreso no válido")
+
+            nombre = str(item.get("nombre") or "").strip()
+            barcode = str(item.get("barcode") or "").strip()
+            marca = str(item.get("marca") or "").strip()
+            talla = str(item.get("talla") or "").strip() or None
+            color = str(item.get("color") or "").strip() or None
+            precio = item.get("precio")
+
+            if not nombre or len(nombre) > 100:
+                raise ValueError(f"Línea {index}: el nombre es obligatorio y admite hasta 100 caracteres")
+            if not barcode or len(barcode) > 50:
+                raise ValueError(f"Línea {index}: el código/SKU es obligatorio y admite hasta 50 caracteres")
+            if not marca or len(marca) > 50:
+                raise ValueError(f"Línea {index}: la marca es obligatoria y admite hasta 50 caracteres")
+            if talla and len(talla) > 10:
+                raise ValueError(f"Línea {index}: la talla admite hasta 10 caracteres")
+            if color and len(color) > 30:
+                raise ValueError(f"Línea {index}: el color admite hasta 30 caracteres")
+            if isinstance(precio, bool) or not isinstance(precio, int) or precio < 0:
+                raise ValueError(f"Línea {index}: el precio debe ser un entero igual o mayor que cero")
+
+            codigo_normalizado = barcode.casefold()
+            if codigo_normalizado in codigos_nuevos_en_lote:
+                raise ValueError(f"Línea {index}: el código está repetido en el ingreso")
+            codigos_nuevos_en_lote.add(codigo_normalizado)
+
+            cursor.execute(
+                """
+                SELECT id_variante
+                FROM variante_producto
+                WHERE LOWER(TRIM(sku)) = LOWER(%s)
+                LIMIT 1
+                """,
+                (barcode,),
+            )
+            if cursor.fetchone():
+                raise ValueError(
+                    f"Línea {index}: ya existe una variante con el código {barcode}"
+                )
+
+            cursor.execute(
+                """
+                SELECT id_producto
+                FROM producto
+                WHERE codigo_base = %s
+                   OR LOWER(TRIM(nombre)) = LOWER(%s)
+                LIMIT 1
+                """,
+                (barcode, nombre),
+            )
+            if cursor.fetchone():
+                raise ValueError(
+                    f"Línea {index}: ya existe una prenda con ese código o nombre"
+                )
+
+            cursor.execute(
+                """
+                SELECT id_marca
+                FROM marca
+                WHERE LOWER(TRIM(nombre)) = LOWER(%s)
+                LIMIT 1
+                """,
+                (marca,),
+            )
+            marca_row = cursor.fetchone()
+            if marca_row:
+                id_marca = int(marca_row["id_marca"])
+            else:
+                cursor.execute(
+                    "INSERT INTO marca (nombre) VALUES (%s)",
+                    (marca,),
+                )
+                id_marca = int(cursor.lastrowid)
+
+            cursor.execute(
+                """
+                INSERT INTO producto (
+                    id_marca, codigo_base, nombre, descripcion, precio_venta
+                )
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (id_marca, barcode, nombre, "Inventario", precio),
+            )
+            id_producto = int(cursor.lastrowid)
+
+            cursor.execute(
+                """
+                INSERT INTO variante_producto (
+                    id_producto, sku, talla, color, stock_actual
+                )
+                VALUES (%s, %s, %s, %s, 0)
+                """,
+                (id_producto, barcode, talla, color),
+            )
+            id_variante = int(cursor.lastrowid)
+
+            cursor.execute(
+                """
+                UPDATE variante_producto
+                SET stock_actual = stock_actual + %s
+                WHERE id_variante = %s
+                """,
+                (cantidad, id_variante),
+            )
+
+            cursor.execute(
+                """
+                INSERT INTO movimiento_stock (
+                    id_variante, tipo, cantidad, fecha, referencia, id_usuario
+                )
+                VALUES (%s, 'Entrada', %s, NOW(), %s, %s)
+                """,
+                (id_variante, cantidad, referencia or None, id_usuario),
+            )
+
+            resultados.append(
+                {
+                    "tipo": "nueva",
+                    "id_variante": id_variante,
+                    "nombre": nombre,
+                    "sku": barcode,
+                    "stock_actual": cantidad,
+                }
+            )
+
+        conn.commit()
+        return {"items": resultados}
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         cursor.close()
         conn.close()
