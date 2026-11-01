@@ -19,6 +19,7 @@ function App() {
   const [page, setPage] = React.useState(() => routePages[window.location.pathname] ?? 'menu');
   const [dark, setDark] = React.useState(false);
   const [session, setSession] = React.useState(() => { try { return JSON.parse(localStorage.getItem('girasol:session')); } catch { return null; } });
+  const [sessionExpired, setSessionExpired] = React.useState(false);
   const [logoutPrompt, setLogoutPrompt] = React.useState(false);
   const [cashPrompt, setCashPrompt] = React.useState(null);
   const [openingCash, setOpeningCash] = React.useState(false);
@@ -32,12 +33,22 @@ function App() {
   const finishLogout = React.useCallback(async () => { try { await authService.logout(); } catch { /* el cierre local debe continuar aunque el API no esté disponible */ } localStorage.removeItem('girasol:session'); setSession(null); setLogoutPrompt(false); setCashPrompt(null); }, []);
   React.useEffect(() => { const logout = () => setLogoutPrompt(true); window.addEventListener('girasol:logout', logout); return () => window.removeEventListener('girasol:logout', logout); }, []);
   React.useEffect(() => {
+    const expireSession = () => {
+      localStorage.removeItem('girasol:session');
+      setSession(null);
+      setSessionExpired(true);
+      setCashPrompt(null);
+    };
+    window.addEventListener('girasol:session-expired', expireSession);
+    return () => window.removeEventListener('girasol:session-expired', expireSession);
+  }, []);
+  React.useEffect(() => {
     if (!session) return;
     let active=true;
     cashService.status(localDate()).then(status => { if (active && !status.existe) setCashPrompt({type:'ask'}); }).catch(error => { if (active) setCashPrompt({type:'error', message:error?.response?.data?.detail || 'No fue posible comprobar el estado de la caja.'}); });
     return () => { active=false; };
   }, [session]);
-  const login = data => { localStorage.setItem('girasol:session', JSON.stringify(data)); setSession(data); };
+  const login = data => { localStorage.setItem('girasol:session', JSON.stringify(data)); setSession(data); setSessionExpired(false); };
   async function openCash() {
     setOpeningCash(true);
     try { const result=await cashService.open(localDate()); setCashPrompt({type:'opened', result}); }
@@ -45,7 +56,7 @@ function App() {
     finally { setOpeningCash(false); }
   }
   const navigate = destination => { const routes={inventario:'/inventario',ventas:'/ventas',configuracion:'/configuracion',clientes:'/clientes',arqueo:'/arqueo','ingreso-mercaderia':'/ingreso-mercaderia',menu:'/'}; window.history.pushState({},'',routes[destination]??'/'); setPage(destination); };
-  if (!session) return <LoginPage onLogin={login}/>;
+  if (!session) return <LoginPage onLogin={login} notice={sessionExpired ? 'Tu sesión venció, posiblemente porque se reinició el servidor. Inicia sesión nuevamente para continuar.' : ''}/>;
   const common={session,dark,onToggleTheme:()=>setDark(v=>!v),onNavigate:navigate,onLogout:()=>setLogoutPrompt(true)};
   let content;
   if(page==='inventario') content=<InventarioPage {...common}/>;

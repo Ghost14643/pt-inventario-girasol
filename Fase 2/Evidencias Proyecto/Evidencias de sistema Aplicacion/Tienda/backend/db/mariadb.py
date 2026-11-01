@@ -4,7 +4,17 @@ from pathlib import Path
 import mysql.connector
 from dotenv import load_dotenv
 from mysql.connector import MySQLConnection
-from mysql.connector import Error
+from mysql.connector import Error, errorcode
+
+
+def asegurar_esquema_producto(cursor) -> None:
+    cursor.execute("SHOW COLUMNS FROM producto LIKE 'activo'")
+    if cursor.fetchone() is None:
+        try:
+            cursor.execute("ALTER TABLE producto ADD COLUMN activo BOOLEAN NOT NULL DEFAULT 1")
+        except Error as exc:
+            if exc.errno != errorcode.ER_DUP_FIELDNAME:
+                raise
 
 
 def _load_environment() -> None:
