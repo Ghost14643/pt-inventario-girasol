@@ -22,6 +22,12 @@ export const authService = {
 export const inventoryService = {
   list: (search = "", marca = "") =>
     api.get("/inventory", { params: { search, marca } }).then((r) => r.data),
+  listAdmin: (search = "", marca = "") =>
+    api
+      .get("/admin/inventory", { params: { search, marca } })
+      .then((r) => r.data),
+  setActive: (id, activo) =>
+    api.patch(`/inventory/${id}/status`, { activo }).then((r) => r.data),
   summary: (stockLowMax = 5) =>
     api
       .get("/inventory/summary", { params: { stock_bajo_maximo: stockLowMax } })

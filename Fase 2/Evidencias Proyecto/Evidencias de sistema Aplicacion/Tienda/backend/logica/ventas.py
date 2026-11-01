@@ -2,6 +2,7 @@ from datetime import datetime
 from decimal import Decimal, ROUND_CEILING
 
 from backend.db.conexion import conectar_mydb
+from backend.db.mariadb import asegurar_esquema_producto
 from backend.logica.credito import _dinero, _perfil, asegurar_esquema_credito, registrar_credito_venta
 
 
@@ -30,6 +31,7 @@ def estimar_pie_credito(productos, cliente_rut):
         raise ConnectionError("No fue posible conectar con MariaDB")
     cursor = conn.cursor(dictionary=True)
     try:
+        asegurar_esquema_producto(cursor)
         asegurar_esquema_credito(cursor)
         conn.commit()
         skus = tuple(cantidades)
@@ -40,7 +42,7 @@ def estimar_pie_credito(productos, cliente_rut):
                    p.costo_adquisicion
             FROM variante_producto vp
             JOIN producto p ON p.id_producto = vp.id_producto
-            WHERE vp.sku IN ({placeholders})
+            WHERE vp.sku IN ({placeholders}) AND p.activo = 1
             """,
             skus,
         )
@@ -185,6 +187,7 @@ def registrar_venta(
         raise ConnectionError("No fue posible conectar con MariaDB")
     mysql_cursor = mysql_conn.cursor(dictionary=True)
     try:
+        asegurar_esquema_producto(mysql_cursor)
         asegurar_esquema_credito(mysql_cursor)
         mysql_conn.commit()
         mysql_conn.start_transaction()
@@ -200,7 +203,8 @@ def registrar_venta(
                    vp.stock_actual AS stock_disponible, vp.sku
             FROM variante_producto vp
             JOIN producto p ON p.id_producto = vp.id_producto
-            WHERE vp.sku IN ({placeholders})
+            WHERE vp.sku IN ({placeholders}) AND p.activo = 1
+            FOR UPDATE
             """,
             ids,
         )

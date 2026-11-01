@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from backend.db.mariadb import conectar_mariadb
+from backend.db.mariadb import asegurar_esquema_producto, conectar_mariadb
 
 
 def obtener_variante_por_codigo(codigo: str) -> dict[str, Any] | None:
@@ -10,6 +10,7 @@ def obtener_variante_por_codigo(codigo: str) -> dict[str, Any] | None:
     cursor = connection.cursor(dictionary=True)
 
     try:
+        asegurar_esquema_producto(cursor)
         cursor.execute(
             """
             SELECT
@@ -28,8 +29,8 @@ def obtener_variante_por_codigo(codigo: str) -> dict[str, Any] | None:
                 ON p.id_producto = vp.id_producto
             INNER JOIN marca m
                 ON m.id_marca = p.id_marca
-            WHERE vp.sku = %s
-               OR p.codigo_base = %s
+            WHERE (vp.sku = %s OR p.codigo_base = %s)
+              AND p.activo = 1
             LIMIT 1
             """,
             (codigo, codigo),

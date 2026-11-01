@@ -40,6 +40,7 @@ CREATE TABLE producto (
   descripcion   TEXT           NULL,
   precio_venta  DECIMAL(10,2)  NOT NULL,
   costo_adquisicion DECIMAL(10,2) NULL,
+  activo        BOOLEAN        NOT NULL DEFAULT 1,
   PRIMARY KEY (id_producto),
   UNIQUE KEY uq_producto_codigo_base (codigo_base),
   CONSTRAINT fk_producto_marca FOREIGN KEY (id_marca) REFERENCES marca (id_marca),
