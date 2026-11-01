@@ -4,11 +4,11 @@ import { authService } from '../services/api.js';
 import loginArtwork from '../../assets/logo_login5.png';
 import brandLogo from '../../assets/logo_girasol.png';
 
-export function LoginPage({ onLogin }) {
+export function LoginPage({ onLogin, notice = "" }) {
   const [rut, setRut] = React.useState('');
   const [password, setPassword] = React.useState('');
   const [showPassword, setShowPassword] = React.useState(false);
-  const [error, setError] = React.useState('');
+  const [error, setError] = React.useState(notice);
   const [invalid, setInvalid] = React.useState('');
   const [loading, setLoading] = React.useState(false);
 

@@ -14,6 +14,21 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (
+      error.response?.status === 401 &&
+      !error.config?.url?.includes("/auth/login") &&
+      localStorage.getItem("girasol:session")
+    ) {
+      localStorage.removeItem("girasol:session");
+      window.dispatchEvent(new Event("girasol:session-expired"));
+    }
+    return Promise.reject(error);
+  },
+);
+
 export const authService = {
   login: (rut, password) =>
     api.post("/auth/login", { rut, password }).then((r) => r.data),
