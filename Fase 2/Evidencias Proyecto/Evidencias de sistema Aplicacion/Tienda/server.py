@@ -14,18 +14,22 @@ import secrets
 from decimal import Decimal
 from pathlib import Path
 from typing import Annotated, Any, Literal
+from urllib.parse import quote
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, Response
+from mysql.connector import Error as MySQLError
 from pydantic import BaseModel, Field
+from pymongo.errors import PyMongoError
+from starlette.concurrency import run_in_threadpool
 
 # Permite que el binario PyInstaller encuentre backend/ al ejecutarse como sidecar.
 ROOT_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from backend.logica import arqueo, clientes, configuracion, credito, facturas, inventario, marcas, ventas  # noqa: E402
+from backend.logica import arqueo, clientes, configuracion, credito, factura_ocr, facturas, inventario, marcas, ventas  # noqa: E402
 
 from backend.repositorios.usuarios_mariadb import (
     autenticar_usuario,
@@ -40,6 +44,8 @@ from backend.repositorios.catalogo_mariadb import (
     obtener_usuario_activo_por_rut,
     obtener_variante_por_codigo,
 )
+from backend.repositorios import facturas_mongodb
+from backend.repositorios.ingresos_mercaderia import aplicar_factura_aprobada
 
 TAURI_DEV_ORIGIN = os.getenv("TAURI_DEV_ORIGIN", "http://localhost:1420")
 REACT_DEV_ORIGIN = os.getenv("REACT_DEV_ORIGIN", "http://localhost:5173")
@@ -198,6 +204,36 @@ class ArqueoRequest(BaseModel):
 
 class BrandCreateRequest(BaseModel):
     nombre: str = Field(min_length=1, max_length=100)
+
+
+class InvoiceLineItem(BaseModel):
+    sku: str = Field(default="", max_length=50)
+    codigo_proveedor: str = Field(default="", max_length=50)
+    nombre: str = Field(default="", max_length=100)
+    cantidad: int = Field(gt=0)
+    precio_costo: float | None = Field(default=None, ge=0)
+    precio_venta: float | None = Field(default=None, ge=0)
+
+
+class InvoiceItemsUpdate(BaseModel):
+    items: list[InvoiceLineItem] = Field(max_length=100)
+
+
+class InvoiceReviewResponse(BaseModel):
+    id: str
+    nombre_archivo: str
+    content_type: str
+    estado: Literal[
+        "PENDIENTE_APROBACION",
+        "EN_PROCESO_APROBACION",
+        "APROBADA",
+    ]
+    estado_ocr: str
+    items: list[InvoiceLineItem]
+    fecha_creacion: str
+    fecha_actualizacion: str
+    aprobada_por: int | None = None
+    fecha_aprobacion: str | None = None
 
 
 class ClientCreateRequest(BaseModel):
@@ -723,6 +759,190 @@ def close_cash_register(data: ArqueoRequest) -> dict[str, Any]:
 @app.post("/cash-register", include_in_schema=False)
 def create_cash_register_legacy(data: ArqueoRequest) -> dict[str, Any]:
     return close_cash_register(data)
+
+
+MAX_SCANNED_INVOICE_SIZE = 15 * 1024 * 1024
+INVOICE_FILE_SIGNATURES = {
+    ".pdf": ("application/pdf", lambda data: data.startswith(b"%PDF-")),
+    ".jpg": ("image/jpeg", lambda data: data.startswith(b"\xff\xd8\xff")),
+    ".jpeg": ("image/jpeg", lambda data: data.startswith(b"\xff\xd8\xff")),
+    ".png": ("image/png", lambda data: data.startswith(b"\x89PNG\r\n\x1a\n")),
+    ".webp": ("image/webp", lambda data: len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP"),
+    ".xml": ("application/xml", lambda data: data.lstrip().startswith(b"<?xml") or data.lstrip().startswith(b"<")),
+}
+
+
+def _invoice_content_type(filename: str, content_type: str, content: bytes) -> str:
+    suffix = Path(filename).suffix.lower()
+    file_type = INVOICE_FILE_SIGNATURES.get(suffix)
+    if file_type is None:
+        raise HTTPException(status_code=415, detail="Solo se aceptan XML de DTE, PDF o imágenes JPG, PNG y WEBP")
+
+    expected_type, signature_matches = file_type
+    allowed_types = {expected_type, "application/octet-stream"}
+    if suffix == ".xml":
+        allowed_types.add("text/xml")
+    if content_type not in ("", *allowed_types):
+        raise HTTPException(status_code=415, detail="El tipo de archivo no coincide con su extensión")
+    if not signature_matches(content):
+        raise HTTPException(status_code=415, detail="El archivo no tiene un formato válido")
+    return expected_type
+
+
+@app.post(
+    "/api/facturas/escanear",
+    status_code=201,
+    response_model=InvoiceReviewResponse,
+)
+async def scan_invoice(
+    factura: UploadFile = File(...),
+    session: dict[str, Any] = Depends(require_session),
+) -> dict[str, Any]:
+    try:
+        content = await factura.read(MAX_SCANNED_INVOICE_SIZE + 1)
+    finally:
+        await factura.close()
+
+    if not content:
+        raise HTTPException(status_code=422, detail="El archivo de la factura está vacío")
+    if len(content) > MAX_SCANNED_INVOICE_SIZE:
+        raise HTTPException(status_code=413, detail="La factura supera el límite de 15 MB")
+
+    raw_filename = (factura.filename or "factura").replace("\\", "/")
+    filename = raw_filename.rsplit("/", 1)[-1]
+    content_type = _invoice_content_type(
+        filename,
+        factura.content_type or "",
+        content,
+    )
+    try:
+        items, extraction_method = await run_in_threadpool(
+            factura_ocr.extraer_items,
+            content,
+            Path(filename).suffix,
+        )
+        return facturas_mongodb.guardar_factura(
+            content,
+            filename,
+            content_type,
+            int(session["id_usuario"]),
+            items,
+            extraction_method,
+        )
+    except factura_ocr.OCREngineUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except PyMongoError as exc:
+        raise HTTPException(status_code=503, detail="No fue posible guardar la factura en MongoDB") from exc
+
+
+@app.get(
+    "/api/facturas/pendientes",
+    response_model=list[InvoiceReviewResponse],
+)
+def list_pending_invoices(
+    _: dict[str, Any] = Depends(require_session),
+) -> list[dict[str, Any]]:
+    try:
+        return facturas_mongodb.listar_pendientes()
+    except PyMongoError as exc:
+        raise HTTPException(status_code=503, detail="No fue posible consultar las facturas en MongoDB") from exc
+
+
+@app.get("/api/facturas/{factura_id}/archivo")
+def get_invoice_file(
+    factura_id: str,
+    _: dict[str, Any] = Depends(require_session),
+) -> Response:
+    try:
+        stored_file = facturas_mongodb.obtener_archivo(factura_id)
+    except PyMongoError as exc:
+        raise HTTPException(status_code=503, detail="No fue posible leer el archivo desde MongoDB") from exc
+    if stored_file is None:
+        raise HTTPException(status_code=404, detail="Factura no encontrada")
+    content, content_type, filename = stored_file
+    return Response(
+        content=content,
+        media_type=content_type,
+        headers={"Content-Disposition": f"inline; filename*=UTF-8''{quote(filename, safe='')}"},
+    )
+
+
+@app.put(
+    "/api/facturas/{factura_id}",
+    response_model=InvoiceReviewResponse,
+)
+def update_invoice_items(
+    factura_id: str,
+    data: InvoiceItemsUpdate,
+    _: dict[str, Any] = Depends(require_session),
+) -> dict[str, Any]:
+    try:
+        invoice = facturas_mongodb.actualizar_items(
+            factura_id,
+            [item.model_dump() for item in data.items],
+        )
+        if invoice is not None:
+            return invoice
+        existing = facturas_mongodb.obtener_factura(factura_id)
+    except PyMongoError as exc:
+        raise HTTPException(status_code=503, detail="No fue posible actualizar la factura en MongoDB") from exc
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Factura no encontrada")
+    raise HTTPException(status_code=409, detail="Solo se pueden editar facturas pendientes de aprobación")
+
+
+@app.put(
+    "/api/facturas/{factura_id}/aprobar",
+    response_model=InvoiceReviewResponse,
+)
+def approve_invoice(
+    factura_id: str,
+    session: dict[str, Any] = Depends(require_session),
+) -> dict[str, Any]:
+    try:
+        invoice = facturas_mongodb.reclamar_para_aprobacion(factura_id)
+        if invoice is None:
+            existing = facturas_mongodb.obtener_factura(factura_id)
+            if existing is None:
+                raise HTTPException(status_code=404, detail="Factura no encontrada")
+            if existing["estado"] == facturas_mongodb.ESTADO_APROBADA:
+                return existing
+            raise HTTPException(status_code=409, detail="La factura no está disponible para aprobación")
+    except PyMongoError as exc:
+        raise HTTPException(status_code=503, detail="No fue posible actualizar la factura en MongoDB") from exc
+
+    try:
+        aplicar_factura_aprobada(
+            factura_id,
+            invoice["items"],
+            int(session["id_usuario"]),
+        )
+    except (LookupError, ValueError) as exc:
+        try:
+            facturas_mongodb.devolver_a_pendiente(factura_id)
+        except PyMongoError as mongo_exc:
+            raise HTTPException(status_code=503, detail="No fue posible restaurar el estado pendiente") from mongo_exc
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ConnectionError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except MySQLError as exc:
+        raise HTTPException(status_code=503, detail="No fue posible actualizar el inventario en MariaDB; reintenta la aprobación") from exc
+
+    try:
+        approved = facturas_mongodb.marcar_aprobada(
+            factura_id,
+            int(session["id_usuario"]),
+        )
+    except PyMongoError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="El stock se aplicó; vuelve a intentar aprobar para sincronizar el estado",
+        ) from exc
+    if approved is None:
+        raise HTTPException(status_code=503, detail="No fue posible confirmar la aprobación de la factura")
+    return approved
 
 
 def _verify_invoice_token(token: str | None) -> None:
