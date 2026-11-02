@@ -1,7 +1,6 @@
 import axios from "axios";
 
-export const API_BASE_URL =
-  "http://34.31.31.126:8765";
+export const API_BASE_URL = "http://34.31.31.126:8765";
 
 export const api = axios.create({ baseURL: API_BASE_URL, timeout: 10000 });
 api.interceptors.request.use((config) => {
@@ -15,6 +14,21 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (
+      error.response?.status === 401 &&
+      !error.config?.url?.includes("/auth/login") &&
+      localStorage.getItem("girasol:session")
+    ) {
+      localStorage.removeItem("girasol:session");
+      window.dispatchEvent(new Event("girasol:session-expired"));
+    }
+    return Promise.reject(error);
+  },
+);
+
 export const authService = {
   login: (rut, password) =>
     api.post("/auth/login", { rut, password }).then((r) => r.data),
@@ -23,6 +37,12 @@ export const authService = {
 export const inventoryService = {
   list: (search = "", marca = "") =>
     api.get("/inventory", { params: { search, marca } }).then((r) => r.data),
+  listAdmin: (search = "", marca = "") =>
+    api
+      .get("/admin/inventory", { params: { search, marca } })
+      .then((r) => r.data),
+  setActive: (id, activo) =>
+    api.patch(`/inventory/${id}/status`, { activo }).then((r) => r.data),
   summary: (stockLowMax = 5) =>
     api
       .get("/inventory/summary", { params: { stock_bajo_maximo: stockLowMax } })
@@ -33,6 +53,14 @@ export const inventoryService = {
   bySku: (sku) =>
     api.get(`/inventory/sku/${encodeURIComponent(sku)}`).then((r) => r.data),
   create: (payload) => api.post("/inventory", payload).then((r) => r.data),
+  lookupForReceiving: (barcode) =>
+    api
+      .get(`/inventory/barcode/${encodeURIComponent(barcode)}`)
+      .then((response) => response.data),
+  confirmReceiving: (items) =>
+    api
+      .post("/inventory/receiving", { items })
+      .then((response) => response.data),
 };
 
 export const salesService = {

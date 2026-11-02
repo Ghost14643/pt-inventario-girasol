@@ -107,6 +107,29 @@ class InventoryCreateRequest(BaseModel):
     barcode: str | None = None
 
 
+class InventoryStatusRequest(BaseModel):
+    activo: bool
+
+
+class InventoryReceivingItem(BaseModel):
+    tipo: Literal["existente", "nueva"]
+    cantidad: int = Field(strict=True, gt=0, le=10_000)
+    referencia: str | None = Field(default=None, max_length=100)
+
+    id_variante: int | None = Field(default=None, gt=0)
+
+    nombre: str | None = Field(default=None, max_length=100)
+    barcode: str | None = Field(default=None, max_length=50)
+    marca: str | None = Field(default=None, max_length=50)
+    precio: int | None = Field(default=None, ge=0)
+    talla: str | None = Field(default=None, max_length=10)
+    color: str | None = Field(default=None, max_length=30)
+
+
+class InventoryReceivingRequest(BaseModel):
+    items: list[InventoryReceivingItem] = Field(min_length=1, max_length=100)
+
+
 class SaleItem(BaseModel):
     id: int | str | None = None
     sku: str
@@ -373,6 +396,34 @@ def list_inventory(search: str = "", marca: str = "") -> list[dict[str, Any]]:
     return inventario.consultar_inventario_ropa(search, marca)
 
 
+@app.get("/admin/inventory")
+def list_admin_inventory(
+    search: str = "",
+    marca: str = "",
+    _: dict[str, Any] = Depends(require_admin),
+) -> list[dict[str, Any]]:
+    try:
+        return inventario.consultar_inventario_ropa(search, marca, incluir_inactivos=True)
+    except ConnectionError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.patch("/inventory/{id_producto}/status")
+def update_inventory_status(
+    id_producto: int,
+    data: InventoryStatusRequest,
+    _: dict[str, Any] = Depends(require_admin),
+) -> dict[str, Any]:
+    try:
+        return inventario.cambiar_estado_producto(id_producto, data.activo)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ConnectionError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
 @app.get("/brands")
 def list_brands() -> list[dict[str, Any]]:
     return marcas.obtener_marcas()
@@ -404,6 +455,21 @@ def get_product_by_barcode(barcode: str) -> dict[str, Any]:
     if product is None:
         raise HTTPException(status_code=404, detail="Producto no encontrado")
     return product
+
+@app.post("/inventory/receiving")
+def confirm_inventory_receiving(
+    data: InventoryReceivingRequest,
+    session: dict[str, Any] = Depends(require_session),
+) -> dict[str, Any]:
+    try:
+        return inventario.registrar_ingreso_mixto(
+            items=[item.model_dump() for item in data.items],
+            id_usuario=int(session["id_usuario"]),
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.get("/inventory/sku/{sku}")

@@ -4,7 +4,7 @@ from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
 
-from backend.db.mariadb import conectar_mariadb
+from backend.db.mariadb import asegurar_esquema_producto, conectar_mariadb
 from backend.logica.credito import asegurar_esquema_credito, registrar_credito_venta
 
 
@@ -80,6 +80,7 @@ def registrar_venta(
     cursor = connection.cursor(dictionary=True)
 
     try:
+        asegurar_esquema_producto(cursor)
         asegurar_esquema_credito(cursor)
         connection.commit()
         connection.start_transaction()
@@ -148,6 +149,7 @@ def registrar_venta(
                 INNER JOIN producto p
                     ON p.id_producto = vp.id_producto
                 WHERE vp.id_variante = %s
+                  AND p.activo = 1
                 FOR UPDATE
                 """,
                 (item["id_variante"],),

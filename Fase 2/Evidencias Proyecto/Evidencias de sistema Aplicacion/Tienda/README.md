@@ -311,7 +311,7 @@ El frontend estará disponible en modo desarrollo con hot-reload.
 
 ### Aplicación completa en Docker (desarrollo)
 
-Con Docker Desktop iniciado y las variables requeridas configuradas en `.env`, levanta la base y la API:
+Con Docker Desktop y MariaDB disponibles, configura `DB_PASSWORD` en `.env` y levanta la API y el frontend:
 
 ```powershell
 docker compose up -d --build
@@ -319,7 +319,7 @@ docker compose ps
 docker compose logs -f dev
 ```
 
-Los servicios `frontend` y `dev` montan el código del workspace y recargan sus cambios al guardar. La interfaz queda en `http://127.0.0.1:5174` y la API en `http://127.0.0.1:8765`; ambos servicios usan la MariaDB del mismo Compose. Para comprobar que el backend del contenedor compila:
+Los servicios `frontend` y `dev` montan el código del workspace. La interfaz queda en `http://127.0.0.1:5174` y la API en `http://127.0.0.1:8765`. La MariaDB es externa a este Compose y se alcanza por defecto en `host.docker.internal:3307`; configura `DB_HOST_DOCKER` y `DB_PORT_DOCKER` si usa otra dirección. Para comprobar que el backend del contenedor compila:
 
 ```powershell
 docker compose exec dev python -m py_compile server.py backend/logica/ventas.py backend/logica/arqueo.py
