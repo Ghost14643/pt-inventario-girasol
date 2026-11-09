@@ -63,6 +63,23 @@ export const inventoryService = {
       .then((response) => response.data),
 };
 
+export const invoiceService = {
+  scan: (file) => {
+    const form = new FormData();
+    form.append("factura", file);
+    return api
+      .post("/api/facturas/escanear", form, { timeout: 180000 })
+      .then((r) => r.data);
+  },
+  pending: () => api.get("/api/facturas/pendientes").then((r) => r.data),
+  file: (id) =>
+    api.get(`/api/facturas/${encodeURIComponent(id)}/archivo`, { responseType: "blob" }).then((r) => r.data),
+  saveItems: (id, items) =>
+    api.put(`/api/facturas/${encodeURIComponent(id)}`, { items }).then((r) => r.data),
+  approve: (id) =>
+    api.put(`/api/facturas/${encodeURIComponent(id)}/aprobar`).then((r) => r.data),
+};
+
 export const salesService = {
   create: (payload) => api.post("/sales", payload).then((r) => r.data),
   estimateCredit: (payload) =>

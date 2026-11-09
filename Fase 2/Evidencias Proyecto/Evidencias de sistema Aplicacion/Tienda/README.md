@@ -311,7 +311,7 @@ El frontend estará disponible en modo desarrollo con hot-reload.
 
 ### Aplicación completa en Docker (desarrollo)
 
-Con Docker Desktop y MariaDB disponibles, configura `DB_PASSWORD` en `.env` y levanta la API y el frontend:
+Con Docker Desktop disponible, configura `DB_PASSWORD` y `MARIADB_ROOT_PASSWORD` en `.env` y levanta los servicios:
 
 ```powershell
 docker compose up -d --build
@@ -319,13 +319,29 @@ docker compose ps
 docker compose logs -f dev
 ```
 
-Los servicios `frontend` y `dev` montan el código del workspace. La interfaz queda en `http://127.0.0.1:5174` y la API en `http://127.0.0.1:8765`. La MariaDB es externa a este Compose y se alcanza por defecto en `host.docker.internal:3307`; configura `DB_HOST_DOCKER` y `DB_PORT_DOCKER` si usa otra dirección. Para comprobar que el backend del contenedor compila:
+Los servicios `frontend` y `dev` montan el código del workspace y recargan sus cambios al guardar. La interfaz queda en `http://localhost:5174` y la API en `http://localhost:8765`. El frontend usa `VITE_API_BASE_URL=http://localhost:8765` de forma predeterminada; al desplegar en otro host, define esa variable en `.env` con la dirección pública de la API y recrea el servicio `frontend`. MariaDB y MongoDB también se levantan en Compose y conservan sus datos en volúmenes. Para comprobar que el backend del contenedor compila:
 
 ```powershell
 docker compose exec dev python -m py_compile server.py backend/logica/ventas.py backend/logica/arqueo.py
 ```
 
 `docker compose down` detiene los servicios sin borrar la base persistida. No uses `docker compose down -v` si quieres conservarla.
+
+### Ingreso de mercadería desde factura
+
+En **Ingreso de mercadería → Escanear factura** se puede cargar un XML DTE, PDF o imagen (JPG, PNG o WEBP, hasta 15 MB), revisar y editar sus líneas, asignar el SKU de Girasol y el precio de venta, y aprobar el ingreso. Se intenta primero interpretar el XML del DTE; en PDF se extrae el texto embebido y, si no se detectan líneas, se usa Tesseract en español. Las imágenes se procesan con Tesseract. El OCR funciona dentro del backend local de Docker y no usa servicios externos. La extracción solo propone líneas y la empleada debe revisarlas antes de aprobar.
+
+El costo unitario se toma del DTE o del OCR cuando se detecta; el precio de venta lo define la empleada. La pantalla permite calcularlo aplicando un margen porcentual a las líneas con costo, y sigue permitiendo corregir el resultado línea por línea. Al aprobar, stock, costo de adquisición, precio de venta y movimientos de entrada se actualizan en una transacción SQL. La aprobación es idempotente para evitar duplicar el stock al reintentar una factura.
+
+Endpoints (requieren una sesión iniciada):
+
+- `POST /api/facturas/escanear` recibe el campo multipart `factura`.
+- `GET /api/facturas/pendientes` lista las facturas pendientes o cuya aprobación debe reintentarse.
+- `GET /api/facturas/{id}/archivo` permite revisar el documento adjunto.
+- `PUT /api/facturas/{id}` guarda las líneas revisadas, con `{ "items": [{ "sku": "CAM-001", "nombre": "Camiseta básica", "cantidad": 4 }] }`.
+- `PUT /api/facturas/{id}/aprobar` aplica el ingreso al inventario.
+
+Para disponer de Tesseract y el paquete de idioma español en la API local, reconstruye el contenedor con `docker compose up -d --build dev`. MongoDB usa la URI `MONGO_URI` (en Compose apunta al servicio `mongodb`) y la base `MONGO_DATABASE`; sus archivos se conservan en el volumen `mongodb_data`.
 
 ---
 
