@@ -2736,7 +2736,7 @@ select {
 
 .icon-button:disabled,
 .invoice-pending__item:disabled {
-  opacity: .5;
+  opacity: 0.5;
   cursor: not-allowed;
 }
 
@@ -2920,7 +2920,11 @@ select {
   padding: 18px;
   color: #34332e;
   background: #f4f4f0;
-  font: 12px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace;
+  font:
+    12px/1.5 ui-monospace,
+    SFMono-Regular,
+    Consolas,
+    monospace;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -3125,7 +3129,9 @@ select {
 }
 
 @keyframes invoice-spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .theme-dark .receiving-tabs,
@@ -3143,4 +3149,29 @@ select {
   .invoice-columns {
     grid-template-columns: 1fr;
   }
+}
+
+.inventory-expand {
+  display: grid;
+  place-items: center;
+  padding: 4px;
+  border: 0;
+  border-radius: 6px;
+  color: #77766d;
+  background: transparent;
+  cursor: pointer;
+}
+
+.inventory-expand:hover {
+  background: #f1f0eb;
+}
+
+.inventory-variant-row td {
+  background: #fafaf7;
+}
+
+.inventory-variant-name {
+  padding-left: 52px !important;
+  color: #77766d !important;
+  font-size: 11px;
 }
