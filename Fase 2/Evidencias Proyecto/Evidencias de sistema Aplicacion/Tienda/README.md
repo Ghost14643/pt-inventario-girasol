@@ -319,7 +319,7 @@ docker compose ps
 docker compose logs -f dev
 ```
 
-Los servicios `frontend` y `dev` montan el código del workspace. La interfaz queda en `http://127.0.0.1:5174` y la API en `http://127.0.0.1:8765`. La MariaDB es externa a este Compose y se alcanza por defecto en `host.docker.internal:3307`; configura `DB_HOST_DOCKER` y `DB_PORT_DOCKER` si usa otra dirección. Para comprobar que el backend del contenedor compila:
+Los servicios `frontend` y `dev` montan el código del workspace. La interfaz queda en `http://127.0.0.1:5174`; el frontend apunta por defecto a `http://35.194.24.11:8765`. Para usar la API local del contenedor, define `VITE_API_BASE_URL=http://127.0.0.1:8765` en el `.env` de Compose. La MariaDB es externa a este Compose y se alcanza por defecto en `host.docker.internal:3307`; configura `DB_HOST_DOCKER` y `DB_PORT_DOCKER` si usa otra dirección. Para comprobar que el backend del contenedor compila:
 
 ```powershell
 docker compose exec dev python -m py_compile server.py backend/logica/ventas.py backend/logica/arqueo.py

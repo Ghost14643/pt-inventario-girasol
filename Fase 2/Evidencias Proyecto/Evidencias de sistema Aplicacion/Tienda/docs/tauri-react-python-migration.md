@@ -49,7 +49,7 @@ frontend/
     └── styles.css
 ```
 
-`src/services/api.js` centraliza el `baseURL` (`VITE_API_BASE_URL` o `http://127.0.0.1:8765`) y mantiene aislados los componentes de cambios futuros en FastAPI.
+`src/services/api.js` centraliza el `baseURL` (`VITE_API_BASE_URL` o `http://35.194.24.11:8765`) y mantiene aislados los componentes de cambios futuros en FastAPI. Para desarrollo local, define `VITE_API_BASE_URL=http://127.0.0.1:8765`.
 
 ## Paso 3: Tauri y sidecar
 
