@@ -42,11 +42,14 @@ def consultar_inventario_ropa(
             SELECT
                 vp.id_variante AS id,
                 p.id_producto,
+                TRIM(p.codigo_base) AS codigo_base,
                 TRIM(p.nombre) AS nombre,
                 TRIM(m.nombre) AS marca,
                 p.precio_venta AS precio,
                 vp.stock_actual AS stock,
                 TRIM(vp.sku) AS barcode,
+                TRIM(vp.talla) AS talla,
+                TRIM(vp.color) AS color,
                 p.activo
             FROM variante_producto vp
             JOIN producto p ON p.id_producto = vp.id_producto
@@ -77,6 +80,9 @@ def consultar_inventario_ropa(
                 "Precio": float(row["precio"] or 0),
                 "Total Stock": int(row["stock"] or 0),
                 "barcode": row["barcode"] or "",
+                "codigo_base": row["codigo_base"] or "",
+                "talla": row["talla"] or "",
+                "color": row["color"] or "",
             }
             for row in rows
         ]

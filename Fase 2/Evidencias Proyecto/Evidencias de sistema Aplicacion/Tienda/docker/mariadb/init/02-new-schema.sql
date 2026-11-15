@@ -243,3 +243,12 @@ CREATE TABLE pago_tarjeta (
   CONSTRAINT ck_pago_tarjeta_cuotas CHECK (cantidad_cuotas > 0),
   CONSTRAINT ck_pago_tarjeta_digitos CHECK (ultimos_4_digitos REGEXP '^[0-9]{4}$')
 );
+
+CREATE TABLE ingreso_factura_aprobada (
+  factura_id       VARCHAR(24) NOT NULL,
+  aprobada_por     INT         NOT NULL,
+  fecha_aprobacion DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (factura_id),
+  CONSTRAINT fk_ingreso_factura_usuario
+    FOREIGN KEY (aprobada_por) REFERENCES usuario (id_usuario)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

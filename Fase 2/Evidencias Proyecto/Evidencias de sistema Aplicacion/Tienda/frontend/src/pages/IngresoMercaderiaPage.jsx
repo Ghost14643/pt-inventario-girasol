@@ -10,6 +10,7 @@ import {
   X,
 } from "lucide-react";
 import { AppLayout } from "../components/AppLayout.jsx";
+import { InvoiceReceivingPanel } from "../components/InvoiceReceivingPanel.jsx";
 import { brandService, inventoryService } from "../services/api.js";
 
 const emptyNewProduct = {
@@ -26,6 +27,7 @@ const errorText = (error) =>
 export function IngresoMercaderiaPage(props) {
   const [barcode, setBarcode] = React.useState("");
   const [mode, setMode] = React.useState("buscar");
+  const [receivingMode, setReceivingMode] = React.useState("manual");
   const [existing, setExisting] = React.useState(null);
   const [newProduct, setNewProduct] = React.useState(emptyNewProduct);
   const [quantity, setQuantity] = React.useState("1");
@@ -239,7 +241,6 @@ export function IngresoMercaderiaPage(props) {
     setMessage("");
     setIsError(false);
   }
-
   return (
     <AppLayout
       {...props}
@@ -247,6 +248,31 @@ export function IngresoMercaderiaPage(props) {
       title="Ingreso de mercadería"
       eyebrow="Recepción de productos"
     >
+      <div className="receiving-tabs" role="tablist" aria-label="Tipo de ingreso">
+        <button
+          className={receivingMode === "manual" ? "is-active" : ""}
+          type="button"
+          role="tab"
+          aria-selected={receivingMode === "manual"}
+          onClick={() => setReceivingMode("manual")}
+        >
+          Ingreso manual
+        </button>
+        <button
+          className={receivingMode === "invoice" ? "is-active" : ""}
+          type="button"
+          role="tab"
+          aria-selected={receivingMode === "invoice"}
+          onClick={() => setReceivingMode("invoice")}
+        >
+          Escanear factura
+        </button>
+      </div>
+
+      {receivingMode === "invoice" ? (
+        <InvoiceReceivingPanel />
+      ) : (
+        <>
       <div className="entry-grid">
         <section className="data-panel form-panel">
           <div className="form-heading">
@@ -580,6 +606,8 @@ export function IngresoMercaderiaPage(props) {
             </div>
           </form>
         </div>
+      )}
+        </>
       )}
     </AppLayout>
   );
