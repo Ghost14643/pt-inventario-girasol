@@ -15,7 +15,6 @@ const links = [
   { id: 'menu', label: 'Menú principal', icon: Menu },
   { id: 'inventario', label: 'Inventario', icon: Boxes },
   { id: 'ventas', label: 'Ventas', icon: ShoppingBag },
-  { id: 'configuracion', label: 'Configuración', icon: Settings, adminOnly: true },
   { id: 'clientes', label: 'Clientas', icon: UsersRound },
   { id: 'arqueo', label: 'Facturas y arqueo', icon: CircleDollarSign },
   { id: 'ingreso-mercaderia', label: 'Ingreso mercadería', icon: PackagePlus },
@@ -45,9 +44,24 @@ export function Sidebar({ active = 'menu', dark, session, onNavigate, onToggleTh
         ))}
       </nav>
 
-      <button className="sidebar__logout" type="button" onClick={onLogout} aria-label="Cerrar sesión" title="Cerrar sesión">
-        <LogOut size={23} />
-      </button>
+      <div className="sidebar__bottom">
+        {Boolean(session?.is_admin) && (
+          <button
+            className={`sidebar__link ${active === 'configuracion' ? 'is-active' : ''}`}
+            type="button"
+            onClick={() => onNavigate('configuracion')}
+            aria-label="Configuración"
+            title="Configuración"
+          >
+            <Settings size={23} strokeWidth={2.2} />
+            <span className="sidebar__tooltip">Configuración</span>
+          </button>
+        )}
+
+        <button className="sidebar__logout" type="button" onClick={onLogout} aria-label="Cerrar sesión" title="Cerrar sesión">
+          <LogOut size={23} />
+        </button>
+    </div>
     </aside>
   );
 }
