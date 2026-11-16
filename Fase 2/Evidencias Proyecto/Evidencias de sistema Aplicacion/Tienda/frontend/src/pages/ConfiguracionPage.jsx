@@ -31,7 +31,7 @@ export function ConfiguracionPage({ session, ...props }) {
   }, [session?.is_admin]);
 
   React.useEffect(() => { load(); }, [load]);
-  if (!session?.is_admin) return <AppLayout {...props} active="configuracion" title="Acceso restringido" eyebrow="Administración"><div className="admin-denied"><ShieldCheck/><h2>Esta sección es solo para administradores</h2><p>Tu cuenta no tiene permisos para revisar usuarios, claves ni descuentos.</p><button className="primary-button" onClick={()=>props.onNavigate('menu')}>Volver al inicio</button></div></AppLayout>;
+  if (!session?.is_admin) return <AppLayout {...props} session={session} active="configuracion" title="Acceso restringido" eyebrow="Administración"><div className="admin-denied"><ShieldCheck/><h2>Esta sección es solo para administradores</h2><p>Tu cuenta no tiene permisos para revisar usuarios, claves ni descuentos.</p><button className="primary-button" onClick={()=>props.onNavigate('menu')}>Volver al inicio</button></div></AppLayout>;
 
   async function saveRole(user, id_rol) {
     try { await adminService.updateRole(user.rut, Number(id_rol)); setNotice(`Rol de ${user.nombre} actualizado.`); await load(); }
@@ -63,7 +63,7 @@ export function ConfiguracionPage({ session, ...props }) {
     catch (error) { setNotice(errorText(error)); }
   }
 
-  return <AppLayout {...props} active="configuracion" title="Configuración" eyebrow="Centro de administración" actions={<button className="secondary-button" onClick={load}><RefreshCw/>Actualizar</button>}>
+  return <AppLayout {...props} session={session} active="configuracion" title="Configuración" eyebrow="Centro de administración" actions={<button className="secondary-button" onClick={load}><RefreshCw/>Actualizar</button>}>
     <div className="admin-intro"><div><span><Settings/></span><div><h2>Control administrativo</h2><p>Gestiona accesos y reglas sensibles del sistema desde un solo lugar.</p></div></div><small><ShieldCheck/> Sesión de administrador · {session.rut}</small></div>
     <div className="metric-grid three"><div className="metric-card"><span className="metric-card__icon yellow"><Users/></span><div><small>Usuarios</small><strong>{summary.usuarios}</strong><em>cuentas registradas</em></div></div><div className="metric-card"><span className="metric-card__icon blue"><UserCog/></span><div><small>Roles</small><strong>{summary.roles}</strong><em>niveles de acceso</em></div></div><div className="metric-card"><span className="metric-card__icon green"><Percent/></span><div><small>Descuentos</small><strong>{summary.descuentos}</strong><em>reglas configuradas</em></div></div></div>
     {notice && <div className="admin-notice">{notice}</div>}

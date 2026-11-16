@@ -1,6 +1,16 @@
 import axios from "axios";
 
-export const API_BASE_URL = "http://34.31.31.126:8765";
+const configuredApiUrl =
+  import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL;
+const loopbackHosts = ["localhost", "127.0.0.1", "0.0.0.0"];
+const configuredApiIsLoopback =
+  configuredApiUrl && loopbackHosts.includes(new URL(configuredApiUrl).hostname);
+const frontendIsRemote = !loopbackHosts.includes(window.location.hostname);
+
+export const API_BASE_URL =
+  configuredApiUrl && !(configuredApiIsLoopback && frontendIsRemote)
+    ? configuredApiUrl
+    : "http://35.194.24.11:8765";
 
 export const api = axios.create({ baseURL: API_BASE_URL, timeout: 10000 });
 api.interceptors.request.use((config) => {

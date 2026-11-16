@@ -4,6 +4,8 @@ import {
   Archive,
   ArchiveRestore,
   Boxes,
+  ChevronDown,
+  ChevronRight,
   PackageCheck,
   Search,
   Tags,
@@ -12,7 +14,7 @@ import {
 import { AppLayout } from "../components/AppLayout.jsx";
 import { brandService, inventoryService } from "../services/api.js";
 
-const money = value =>
+const money = (value) =>
   new Intl.NumberFormat("es-CL", {
     style: "currency",
     currency: "CLP",
@@ -20,6 +22,7 @@ const money = value =>
   }).format(Number(value || 0));
 
 export function InventarioPage({ session, ...props }) {
+  const [expandedProducts, setExpandedProducts] = React.useState(new Set());
   const [search, setSearch] = React.useState("");
   const [brand, setBrand] = React.useState("");
   const [brands, setBrands] = React.useState([]);
@@ -40,6 +43,33 @@ export function InventarioPage({ session, ...props }) {
   });
   const isAdmin = Boolean(session?.is_admin);
 
+  const products = React.useMemo(() => {
+    const grouped = new Map();
+
+    for (const row of rows) {
+      let product = grouped.get(row.id_producto);
+
+      if (!product) {
+        product = { ...row, variantes: [], stockTotal: 0 };
+        grouped.set(row.id_producto, product);
+      }
+
+      product.variantes.push(row);
+      product.stockTotal += Number(row["Total Stock"] || 0);
+    }
+
+    return [...grouped.values()];
+  }, [rows]);
+
+  function toggleProduct(id) {
+    setExpandedProducts((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
   React.useEffect(() => {
     Promise.all([inventoryService.summary(), brandService.list()])
       .then(([stats, list]) => {
@@ -57,7 +87,7 @@ export function InventarioPage({ session, ...props }) {
           ? inventoryService.listAdmin(search, brand)
           : inventoryService.list(search, brand);
       request
-        .then(result => {
+        .then((result) => {
           setRows(result);
           setError("");
         })
@@ -87,7 +117,7 @@ export function InventarioPage({ session, ...props }) {
       try {
         setSummary(await inventoryService.summary());
       } catch {
-        setFeedback(message => `${message} El resumen no pudo actualizarse.`);
+        setFeedback((message) => `${message} El resumen no pudo actualizarse.`);
       }
     } catch (requestError) {
       setStatusError(
@@ -119,7 +149,7 @@ export function InventarioPage({ session, ...props }) {
             <Search size={19} />
             <input
               value={search}
-              onChange={event => setSearch(event.target.value)}
+              onChange={(event) => setSearch(event.target.value)}
               placeholder="Buscar por nombre o código de barra..."
             />
           </label>
@@ -158,52 +188,122 @@ export function InventarioPage({ session, ...props }) {
                 {loading ? (
                   <tr><td colSpan={isAdmin ? 7 : 6} className="table-message">Cargando inventario…</td></tr>
                 ) : rows.length ? (
-                  rows.map((row, index) => {
-                    const stock = Number(row["Total Stock"] || 0);
-                    const firstProductRow =
-                      rows.findIndex(item => item.id_producto === row.id_producto) === index;
-                    const active = row.activo !== false;
+                  products.map((product) => {
+                    const expanded = expandedProducts.has(product.id_producto);
+                    const stock = product.stockTotal;
+                    const active = product.activo !== false;
+
                     return (
-                      <tr key={row.id ?? index}>
-                        <td>
-                          <div className="product-cell">
-                            <span>{String(row.Prenda || "P")[0]}</span>
-                            <strong>{row.Prenda || "Sin nombre"}</strong>
-                          </div>
-                        </td>
-                        <td className="mono">{row.barcode || "—"}</td>
-                        <td><span className="category-pill">{row.Marca || "Sin marca"}</span></td>
-                        <td><strong>{money(row.Precio)}</strong></td>
-                        <td>{stock} un.</td>
-                        <td>
-                          <span className={`status-pill ${!active || stock === 0 ? "out" : stock <= 5 ? "low" : "ok"}`}>
-                            {!active ? "Deshabilitado" : stock === 0 ? "Agotado" : stock <= 5 ? "Stock bajo" : "Disponible"}
-                          </span>
-                        </td>
-                        {isAdmin && (
+                      <React.Fragment key={product.id_producto}>
+                        <tr>
                           <td>
-                            {firstProductRow && (
+                            <div className="product-cell">
+                              <button
+                                type="button"
+                                className="inventory-expand"
+                                aria-expanded={expanded}
+                                aria-label={`${expanded ? "Ocultar" : "Mostrar"} variantes de ${product.Prenda}`}
+                                onClick={() =>
+                                  toggleProduct(product.id_producto)
+                                }
+                              >
+                                {expanded ? (
+                                  <ChevronDown size={16} />
+                                ) : (
+                                  <ChevronRight size={16} />
+                                )}
+                              </button>
+                              <span>{String(product.Prenda || "P")[0]}</span>
+                              <strong>{product.Prenda || "Sin nombre"}</strong>
+                            </div>
+                          </td>
+                          <td className="mono">{product.codigo_base || "—"}</td>
+                          <td>
+                            <span className="category-pill">
+                              {product.Marca || "Sin marca"}
+                            </span>
+                          </td>
+                          <td>
+                            <strong>{money(product.Precio)}</strong>
+                          </td>
+                          <td>{stock} un.</td>
+                          <td>
+                            <span
+                              className={`status-pill ${!active || stock === 0 ? "out" : stock <= 5 ? "low" : "ok"}`}
+                            >
+                              {!active
+                                ? "Deshabilitado"
+                                : stock === 0
+                                  ? "Agotado"
+                                  : stock <= 5
+                                    ? "Stock bajo"
+                                    : "Disponible"}
+                            </span>
+                          </td>
+                          {isAdmin && (
+                            <td>
                               <button
                                 type="button"
                                 className="secondary-button"
-                                onClick={() =>
-                                  {
-                                    setStatusError("");
-                                    setPendingProduct({
-                                      id_producto: row.id_producto,
-                                      nombre: row.Prenda || "Este producto",
-                                      activo: active,
-                                    });
-                                  }
-                                }
+                                onClick={() => {
+                                  setStatusError("");
+                                  setPendingProduct({
+                                    id_producto: product.id_producto,
+                                    nombre: product.Prenda || "Este producto",
+                                    activo: active,
+                                  });
+                                }}
                               >
-                                {active ? <Archive size={16} /> : <ArchiveRestore size={16} />}
+                                {active ? (
+                                  <Archive size={16} />
+                                ) : (
+                                  <ArchiveRestore size={16} />
+                                )}
                                 {active ? "Deshabilitar" : "Reactivar"}
                               </button>
-                            )}
-                          </td>
-                        )}
-                      </tr>
+                            </td>
+                          )}
+                        </tr>
+
+                        {expanded &&
+                          product.variantes.map((variant) => {
+                            const variantStock = Number(
+                              variant["Total Stock"] || 0,
+                            );
+
+                            return (
+                              <tr
+                                className="inventory-variant-row"
+                                key={variant.id}
+                              >
+                                <td className="inventory-variant-name">
+                                  {variant.talla || "Sin talla"}
+                                  {variant.color ? ` · ${variant.color}` : ""}
+                                </td>
+                                <td className="mono">
+                                  {variant.barcode || "—"}
+                                </td>
+                                <td>{product.Marca || "Sin marca"}</td>
+                                <td>{money(product.Precio)}</td>
+                                <td>{variantStock} un.</td>
+                                <td>
+                                  <span
+                                    className={`status-pill ${!active || variantStock === 0 ? "out" : variantStock <= 5 ? "low" : "ok"}`}
+                                  >
+                                    {!active
+                                      ? "Deshabilitado"
+                                      : variantStock === 0
+                                        ? "Agotado"
+                                        : variantStock <= 5
+                                          ? "Stock bajo"
+                                          : "Disponible"}
+                                  </span>
+                                </td>
+                                {isAdmin && <td />}
+                              </tr>
+                            );
+                          })}
+                      </React.Fragment>
                     );
                   })
                 ) : (
@@ -213,7 +313,9 @@ export function InventarioPage({ session, ...props }) {
             </table>
           </div>
         )}
-        <footer className="panel-footer">Mostrando <strong>{rows.length}</strong> prendas</footer>
+        <footer className="panel-footer">
+          Mostrando <strong>{products.length}</strong> prendas
+        </footer>
         {feedback && <p role="status">{feedback}</p>}
       </section>
 

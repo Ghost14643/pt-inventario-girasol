@@ -319,7 +319,7 @@ docker compose ps
 docker compose logs -f dev
 ```
 
-Los servicios `frontend` y `dev` montan el código del workspace y recargan sus cambios al guardar. La interfaz queda en `http://localhost:5174` y la API en `http://localhost:8765`. El frontend usa `VITE_API_BASE_URL=http://localhost:8765` de forma predeterminada; al desplegar en otro host, define esa variable en `.env` con la dirección pública de la API y recrea el servicio `frontend`. MariaDB y MongoDB también se levantan en Compose y conservan sus datos en volúmenes. Para comprobar que el backend del contenedor compila:
+Los servicios `frontend` y `dev` montan el código del workspace y recargan sus cambios al guardar. La interfaz queda en `http://localhost:5174` y el frontend apunta por defecto a `http://localhost:8765`. Al desplegar en otro host, define `VITE_API_BASE_URL` en el `.env` con la dirección pública de la API y recrea el servicio `frontend`. MariaDB y MongoDB se levantan en Compose y conservan sus datos en volúmenes. Para comprobar que el backend del contenedor compila:
 
 ```powershell
 docker compose exec dev python -m py_compile server.py backend/logica/ventas.py backend/logica/arqueo.py

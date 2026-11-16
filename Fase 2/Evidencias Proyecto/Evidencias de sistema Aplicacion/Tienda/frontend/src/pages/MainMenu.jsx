@@ -24,7 +24,7 @@ const modules = [
 export function MainMenu({ session, dark = false, onToggleTheme, onNavigate, onLogout }) {
   return (
     <div className={`boutique-shell ${dark ? 'theme-dark' : ''}`}>
-      <Sidebar active="menu" dark={dark} onToggleTheme={onToggleTheme} onNavigate={onNavigate} onLogout={onLogout} />
+      <Sidebar active="menu" dark={dark} session={session} onToggleTheme={onToggleTheme} onNavigate={onNavigate} onLogout={onLogout} />
 
       <main className="main-menu" style={{ '--boutique-background': `url(${boutiqueBackground})` }}>
         <header className="main-menu__header">
